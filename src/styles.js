@@ -1140,18 +1140,84 @@ export const STYLES = `
   .app-toast-info  { background: #eff6ff; color: #1e40af; border: 1px solid rgba(59,130,246,0.3); }
   .app-toast-icon  { font-size: 16px; flex-shrink: 0; }
 
-  /* ── Report Addon Sections ── */
-  .report-addon-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
-  .report-addon-btn {
-    display: flex; align-items: center; gap: 5px;
-    padding: 8px 14px; border-radius: 10px; font-size: 12px; font-weight: 600;
-    border: 1px solid var(--glass-border); background: var(--bg-surface-2);
-    color: var(--text-secondary); cursor: pointer; font-family: var(--font-sans);
-    transition: all 0.2s;
+  /* ── Deep Analysis Panel ── */
+  .deep-analysis-panel {
+    margin-top: 20px; border-radius: 16px;
+    border: 1px solid var(--glass-border);
+    background: var(--bg-surface-1); overflow: hidden;
   }
-  .report-addon-btn:hover:not(:disabled) { border-color: var(--accent-primary); color: var(--accent-primary); background: rgba(49,130,246,0.04); }
-  .report-addon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-  .report-addon-btn.active { border-color: var(--accent-primary); color: #fff; background: var(--accent-primary); }
+  .deep-analysis-toggle {
+    width: 100%; display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 18px; border: none;
+    background: linear-gradient(135deg, rgba(49,130,246,0.04), rgba(124,58,237,0.03));
+    cursor: pointer; font-family: var(--font-sans); transition: background 0.2s;
+  }
+  .deep-analysis-toggle:hover {
+    background: linear-gradient(135deg, rgba(49,130,246,0.07), rgba(124,58,237,0.05));
+  }
+  .deep-analysis-toggle-left { display: flex; align-items: center; gap: 12px; }
+  .deep-analysis-toggle-icon {
+    width: 36px; height: 36px; border-radius: 10px;
+    background: linear-gradient(135deg, #3182f6, #7c3aed);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; flex-shrink: 0; color: #fff; font-weight: 800;
+  }
+  .deep-analysis-toggle-title {
+    font-size: 14px; font-weight: 800; color: var(--text-primary);
+    letter-spacing: -0.02em; text-align: left;
+  }
+  .deep-analysis-toggle-desc {
+    font-size: 11px; color: var(--text-muted); margin-top: 1px; text-align: left;
+  }
+  .deep-analysis-arrow {
+    font-size: 13px; color: var(--text-muted);
+    transition: transform 0.3s cubic-bezier(0.4,0,0.2,1);
+  }
+  .deep-analysis-arrow[data-open="true"] { transform: rotate(180deg); }
+  .deep-analysis-body { padding: 4px 16px 16px; border-top: 1px solid var(--glass-border); }
+  .deep-analysis-cat-label {
+    display: flex; align-items: center; gap: 6px;
+    margin: 16px 0 8px 2px; font-size: 11px; font-weight: 700;
+    color: var(--text-muted); letter-spacing: 0.02em;
+  }
+  .deep-analysis-cat-label:first-child { margin-top: 12px; }
+  .deep-analysis-cat-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+
+  /* ── Report Addon Sections ── */
+  .report-addon-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+  }
+  @media (max-width: 420px) { .report-addon-grid { grid-template-columns: 1fr; } }
+  .report-addon-btn {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+    padding: 12px 14px; border-radius: 12px; font-size: 13px; font-weight: 700;
+    border: 1px solid var(--glass-border); background: var(--bg-surface-2);
+    color: var(--text-primary); cursor: pointer; font-family: var(--font-sans);
+    transition: all 0.2s; text-align: left; min-height: 52px;
+  }
+  .report-addon-btn .addon-icon-label {
+    display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700;
+  }
+  .report-addon-btn .addon-desc {
+    font-size: 11px; font-weight: 400; color: var(--text-muted); line-height: 1.3;
+  }
+  .report-addon-btn:hover:not(:disabled) {
+    border-color: var(--accent-primary); background: rgba(49,130,246,0.04);
+    box-shadow: 0 2px 8px rgba(49,130,246,0.08); transform: translateY(-1px);
+  }
+  .report-addon-btn:active:not(:disabled) { transform: translateY(0); }
+  .report-addon-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .report-addon-btn.active {
+    border-color: var(--accent-primary);
+    background: linear-gradient(135deg, rgba(49,130,246,0.08), rgba(124,58,237,0.04));
+    box-shadow: 0 2px 8px rgba(49,130,246,0.1);
+  }
+  /* standalone addon button (map, investor, expert) inside panel */
+  .report-addon-btn.full-width {
+    flex-direction: row; align-items: center; gap: 8px;
+    min-height: 44px; justify-content: flex-start;
+  }
+  .report-addon-btn.full-width .addon-desc { margin-left: auto; font-weight: 500; }
   .report-export-bar {
     display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap;
   }
@@ -1194,11 +1260,25 @@ export const STYLES = `
   .brand-viral-result-body { padding: 0 14px 14px; }
 
   .report-scroll-box {
-    max-height: min(60vh, 600px); overflow-y: auto; padding-right: 4px;
-    scrollbar-width: thin; scrollbar-color: rgba(0,0,0,0.15) transparent;
+    max-height: min(75vh, 800px); overflow-y: auto; padding-right: 4px;
+    scrollbar-width: thin; scrollbar-color: rgba(0,0,0,0.12) transparent;
   }
+  @media (max-width: 768px) { .report-scroll-box { max-height: min(65vh, 600px); } }
   .report-scroll-box::-webkit-scrollbar { width: 5px; }
-  .report-scroll-box::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 99px; }
+  .report-scroll-box::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 99px; }
+  .addon-result-header {
+    cursor: pointer; display: flex; align-items: center; padding: 12px 14px;
+    border-radius: 10px; transition: background 0.15s;
+  }
+  .addon-result-header:hover { background: rgba(0,0,0,0.02); }
+  .addon-result-collapse {
+    margin-left: auto; border: none; background: none; cursor: pointer;
+    font-size: 12px; color: var(--text-muted); transition: transform 0.2s;
+    display: flex; align-items: center; justify-content: center;
+    width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0;
+  }
+  .addon-result-collapse:hover { background: rgba(0,0,0,0.04); }
+  .addon-result-collapse[data-open="true"] { transform: rotate(180deg); }
 
   .loading-dots::after {
     content: ''; display: inline-block; width: 1.2em; text-align: left;

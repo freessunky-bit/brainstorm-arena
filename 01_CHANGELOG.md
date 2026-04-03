@@ -4,6 +4,54 @@
 
 ---
 
+## 2026-04-03 #19 — 추가 분석 도구 GUI 전면 리디자인
+
+### 변경
+
+#### DeepAnalysisPanel 접이식 래퍼 신설
+- 기존 5개 분산 컴포넌트(ReportAddonSection, CompetitorMapSection, InvestorSearchSection, ExpertSearchSection, QuantumSimCTA)를 하나의 접이식 패널로 통합
+- 그라디언트 토글 버튼 + 아이콘으로 깔끔한 진입점 제공
+- 12개 이상 호출부를 `<DeepAnalysisPanel />` 1개로 교체
+
+#### 분석 옵션 카테고리화
+- REPORT_ADDONS에 `desc` 추가, `ADDON_CATEGORIES`로 그룹 분리
+- "전략 & 브랜딩" (3개) / "재무 & 리서치" (4개) / "탐색 & 시뮬레이션" (3개+퀀텀) 구분
+- 카테고리별 컬러 도트 + 라벨 헤더로 시각적 정리
+
+#### 버튼 카드형 리디자인 (CSS)
+- `.report-addon-grid`: flex-wrap → 2열 grid (모바일 1열 반응형)
+- `.report-addon-btn`: 칩형 → 카드형 (아이콘+라벨+설명, min-height 52px)
+- hover 시 translateY(-1px) + box-shadow 미세 애니메이션
+- active 상태: 그라디언트 배경으로 시각 피드백 개선
+- 독립 버튼(지도/투자/전문가)에 `.full-width` + `addon-desc` 통일
+
+#### 결과 출력 영역 개선
+- `.report-scroll-box` max-height: 60vh → 75vh(데스크탑), 65vh(모바일)
+- 결과 카드 헤더 전체 클릭으로 접기/펼치기 (▲ 버튼 → ▾ 회전 아이콘)
+- `.addon-result-header` hover 효과 + 28px 히트 영역
+
+#### UX 피드백 보강
+- 다른 분석 진행 중 클릭 시 토스트 알림 표시 (기존: 무반응 차단)
+- `Fragment` import 추가 (카테고리 그룹 렌더링용)
+
+### 관련 파일
+- `src/App.jsx`
+- `src/styles.js`
+
+---
+
+## 2026-04-03 #18 — 모바일 불러오기 패널 키보드 자동 팝업 제거
+
+### 변경
+- `App.jsx` 1823번째 줄 `IdeaStackPopover` 내 검색 입력창에서 `autoFocus` 속성 제거
+- 불러오기 패널 열릴 때 키보드가 자동으로 올라오던 문제 수정
+- 이제 사용자가 검색창을 직접 탭할 때만 키보드 트레이 노출
+
+### 관련 파일
+- `src/App.jsx`
+
+---
+
 ## 2026-04-03 #17 — 추가분석 출력 겹침 수정, 히스토리 × 버튼 가시성 개선
 
 ### 변경

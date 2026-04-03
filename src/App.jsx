@@ -1,4 +1,4 @@
-import { useState, useEffect, createContext, useContext, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, createContext, useContext, useCallback, useRef, useMemo, Fragment } from "react";
 import ReactDOM from "react-dom";
 import L from "leaflet";
 import { MapContainer, TileLayer, CircleMarker, Tooltip, useMap } from "react-leaflet";
@@ -1103,16 +1103,7 @@ function HistoryDetailModal({ entry, onClose, personas, globalKey }) {
         <div className="history-detail-footer">
           <div className="history-detail-footer-inner">
             <ReportExportBar entryForExport={{ modeId: entry.modeId, title: entry.title, payload: entry.payload }} />
-            <ReportAddonSection idea={extractIdeaFromPayload(entry)} context={entry.payload?.fb || entry.payload?.context || ""} existingReport={extractReportFromPayload(entry)} personas={personas} globalKey={globalKey} />
-            <CompetitorMapSection idea={extractIdeaFromPayload(entry)} personas={personas} globalKey={globalKey} />
-            <InvestorSearchSection idea={extractIdeaFromPayload(entry)} personas={personas} globalKey={globalKey} />
-            <ExpertSearchSection idea={extractIdeaFromPayload(entry)} personas={personas} globalKey={globalKey} />
-            <QuantumSimCTA
-              idea={extractIdeaFromPayload(entry)}
-              context={entry.payload?.context || entry.payload?.fb || ""}
-              existingReport={extractReportFromPayload(entry)}
-              personas={personas} globalKey={globalKey}
-            />
+            <DeepAnalysisPanel idea={extractIdeaFromPayload(entry)} context={entry.payload?.fb || entry.payload?.context || ""} existingReport={extractReportFromPayload(entry)} personas={personas} globalKey={globalKey} />
             <ReportTools reportText={extractReportFromPayload(entry)} personas={personas} globalKey={globalKey} />
           </div>
         </div>
@@ -1444,11 +1435,7 @@ function MultiPerspective({ personas, globalKey, utilProvider, utilModel, utilAp
               <div style={{ marginTop: 10 }}>
                 <ReportExportBar entryForExport={{ modeId: "analyze", title: clipTitle(idea), payload: { idea, fb, results, synthesis, deepSteps: deepResults } }} />
               </div>
-              <ReportAddonSection idea={idea} context={ideaContext} existingReport={synthesis || Object.values(results).join("\n\n")} personas={personas} globalKey={globalKey} />
-              <CompetitorMapSection idea={idea} personas={personas} globalKey={globalKey} />
-              <InvestorSearchSection idea={idea} personas={personas} globalKey={globalKey} />
-              <ExpertSearchSection idea={idea} personas={personas} globalKey={globalKey} />
-              <QuantumSimCTA idea={idea} context={ideaContext} existingReport={synthesis || Object.values(results).join("\n\n")} personas={personas} globalKey={globalKey} />
+              <DeepAnalysisPanel idea={idea} context={ideaContext} existingReport={synthesis || Object.values(results).join("\n\n")} personas={personas} globalKey={globalKey} />
               <ReportTools reportText={synthesis || Object.values(results).join("\n\n")} personas={personas} globalKey={globalKey} />
               <SaveToArchiveBtn modeId="analyze" title={clipTitle(idea)} payload={{ idea, fb, results, synthesis, deepSteps: deepResults }} />
             </div>
@@ -1668,6 +1655,17 @@ function IdeaStackPopover({ onSelect, onClose, personas, globalKey, utilProvider
   const [webLoading, setWebLoading] = useState(false);
   const [webStatus, setWebStatus] = useState("");
   const ref = useRef(null);
+  const docInputRef = useRef(null);
+  const imgInputRef = useRef(null);
+
+  const DOCUMENT_ACCEPT = "application/pdf,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.pdf,.ppt,.pptx,.xls,.xlsx,.csv";
+  const IMAGE_ACCEPT = "image/*";
+
+  const openDocPicker = () => docInputRef.current?.click();
+  const openImagePicker = () => imgInputRef.current?.click();
+
+  const isImageFile = (file) => file && (file.type?.startsWith("image/") || /\.(jpe?g|png|gif|webp|bmp|tiff)$/i.test(file.name));
+
   const videoLoadingRef = useRef(false);
   useEffect(() => { videoLoadingRef.current = videoLoading; }, [videoLoading]);
   useEffect(() => {
@@ -1686,16 +1684,29 @@ function IdeaStackPopover({ onSelect, onClose, personas, globalKey, utilProvider
     return u.hasKey ? u : null;
   };
 
-  const handleDocUpload = async (e) => {
-    const file = e.target.files?.[0];
+  const handleFileUpload = async (file) => {
     if (!file) return;
-    e.target.value = "";
-    const ext = file.name.split(".").pop()?.toLowerCase();
-    setUploading(`📄 ${file.name} 파싱 중...`);
+    const persona = getPersona();
+    const filename = file.name || "파일";
+
+    if (isImageFile(file)) {
+      if (!persona?.apiKey) { alert("이미지 분석을 위해 API 키를 설정해 주세요."); return; }
+      setUploading(`🖼️ ${filename} 분석 중...`);
+      try {
+        const result = await processImageWithVision(file, persona);
+        onSelect(result);
+      } catch (err) {
+        alert(`이미지 처리 실패: ${err.message}`);
+      }
+      setUploading("");
+      return;
+    }
+
+    const ext = (filename.split(".").pop() || "").toLowerCase();
+    setUploading(`📄 ${filename} 파싱 중...`);
     try {
       const rawText = await parseDocumentFile(file);
       if (!rawText.trim()) { setUploading(""); alert("문서에서 텍스트를 추출할 수 없습니다."); return; }
-      const persona = getPersona();
       if (persona?.apiKey) {
         setUploading(`🤖 AI로 아이디어 요약 중...`);
         const summary = await callAI(persona, [{ role: "user", content: `아래는 업로드된 ${ext?.toUpperCase()} 문서의 텍스트입니다. 이 내용에서 핵심 비즈니스 아이디어, 컨셉, 기획 요소를 추출하여 한국어로 간결하게 정리해 주세요. 아이디어 입력에 바로 사용할 수 있는 형태로.\n\n---\n${rawText.slice(0, 8000)}` }]);
@@ -1709,20 +1720,18 @@ function IdeaStackPopover({ onSelect, onClose, personas, globalKey, utilProvider
     setUploading("");
   };
 
-  const handleImageUpload = async (e) => {
+  const handleDocUpload = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     e.target.value = "";
-    const persona = getPersona();
-    if (!persona?.apiKey) { alert("이미지 분석을 위해 API 키를 설정해 주세요."); return; }
-    setUploading(`🖼️ ${file.name} 분석 중...`);
-    try {
-      const result = await processImageWithVision(file, persona);
-      onSelect(result);
-    } catch (err) {
-      alert(`이미지 처리 실패: ${err.message}`);
-    }
-    setUploading("");
+    handleFileUpload(file);
+  };
+
+  const handleImageUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+    handleFileUpload(file);
   };
 
   const handleVideoLink = async () => {
@@ -1798,7 +1807,7 @@ function IdeaStackPopover({ onSelect, onClose, personas, globalKey, utilProvider
         <span className="isp-header-title">불러오기</span>
         <span className="isp-header-badge">{stack.length}</span>
       </div>
-      <input className="idea-stack-search" value={q} onChange={e => setQ(e.target.value)} placeholder="아이디어 검색..." autoFocus />
+      <input className="idea-stack-search" value={q} onChange={e => setQ(e.target.value)} placeholder="아이디어 검색..." />
       <div className="idea-stack-list">
         {filtered.length === 0 && <div className="idea-stack-empty">{stack.length === 0 ? "저장된 아이디어가 없습니다" : "검색 결과 없음"}</div>}
         {filtered.map((s, i) => (
@@ -1816,34 +1825,20 @@ function IdeaStackPopover({ onSelect, onClose, personas, globalKey, utilProvider
           문서에서 아이디어 추출
         </div>
         <div className="upload-grid">
-          <label className={`upload-chip${uploading ? " processing" : ""}`}>
+          <button type="button" className={`upload-chip${uploading ? " processing" : ""}`} onClick={openDocPicker}>
             <span className="upload-chip-icon" style={{ background: "rgba(239,68,68,0.08)" }}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
             </span>
-            PDF
-            <input type="file" accept=".pdf" onChange={handleDocUpload} />
-          </label>
-          <label className={`upload-chip${uploading ? " processing" : ""}`}>
-            <span className="upload-chip-icon" style={{ background: "rgba(249,115,22,0.08)" }}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#f97316" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>
-            </span>
-            PPT
-            <input type="file" accept=".pptx" onChange={handleDocUpload} />
-          </label>
-          <label className={`upload-chip${uploading ? " processing" : ""}`}>
-            <span className="upload-chip-icon" style={{ background: "rgba(34,197,94,0.08)" }}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M9 3v18"/></svg>
-            </span>
-            Excel
-            <input type="file" accept=".xlsx,.xls,.csv" onChange={handleDocUpload} />
-          </label>
-          <label className={`upload-chip${uploading ? " processing" : ""}`}>
+            문서 업로드 (PDF/PPTX/XLSX/CSV)
+          </button>
+          <button type="button" className={`upload-chip${uploading ? " processing" : ""}`} onClick={openImagePicker}>
             <span className="upload-chip-icon" style={{ background: "rgba(139,92,246,0.08)" }}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
             </span>
-            이미지
-            <input type="file" accept="image/*" onChange={handleImageUpload} />
-          </label>
+            이미지 업로드
+          </button>
+          <input ref={docInputRef} type="file" accept={DOCUMENT_ACCEPT} onChange={handleDocUpload} style={{ display: "none" }} />
+          <input ref={imgInputRef} type="file" accept={IMAGE_ACCEPT} onChange={handleImageUpload} style={{ display: "none" }} />
         </div>
         {uploading && <div className="upload-progress"><span className="spinner" style={{ width: 14, height: 14 }} />{uploading}</div>}
         <div style={{ marginTop: 12 }}>
@@ -2353,11 +2348,7 @@ function Tournament({ personas, globalKey, utilProvider, utilModel, utilApiKey }
                       <div style={{ marginTop: 10 }}>
                         <ReportExportBar entryForExport={{ modeId: "tournament", title: clipTitle(ctx || uids[0] || "토너먼트"), payload: { ctx, fb, seedIdeas: [...uids], aiIdeas, rounds, finalTop: ft, finalReport: sr } }} />
                       </div>
-                      <ReportAddonSection idea={ctx || uids[0] || "토너먼트"} context={ideaContext} existingReport={sr} personas={personas} globalKey={globalKey} />
-                      <CompetitorMapSection idea={ctx || uids[0] || "토너먼트"} personas={personas} globalKey={globalKey} />
-                      <InvestorSearchSection idea={ctx || uids[0] || "토너먼트"} personas={personas} globalKey={globalKey} />
-                      <ExpertSearchSection idea={ctx || uids[0] || "토너먼트"} personas={personas} globalKey={globalKey} />
-                      <QuantumSimCTA idea={ctx || uids[0] || "토너먼트"} context={ideaContext} existingReport={sr} personas={personas} globalKey={globalKey} />
+                      <DeepAnalysisPanel idea={ctx || uids[0] || "토너먼트"} context={ideaContext} existingReport={sr} personas={personas} globalKey={globalKey} />
                       <ReportTools reportText={sr} personas={personas} globalKey={globalKey} />
                       <SaveToArchiveBtn modeId="tournament" title={clipTitle(ctx || uids[0] || "토너먼트")} payload={{ ctx, fb, seedIdeas: [...uids], aiIdeas, rounds, finalTop: ft, finalReport: sr }} />
                     </div>
@@ -2404,7 +2395,7 @@ function DevilsAdvocate({ personas, globalKey, utilProvider, utilModel, utilApiK
     <FeedbackField value={fb} onChange={setFb} placeholder="예: 규제 리스크·팀 역량 위주로 파고들어 달라…" style={{ marginBottom: 16 }} />
     <button className="btn-cta" onClick={run} disabled={running || !idea.trim()}>{running ? <><span className="spinner" /> Pre-mortem 진행 중<span className="loading-dots" /></> : <>Pre-mortem 시작<CreditCostTag costKey="devil" /></>}</button>
     {running && <QuoteRoller />}
-    {result && (<><div className="r-card" style={{ marginTop: 20, borderLeft: "3px solid var(--accent-error)" }}><div className="r-card-header"><span className="r-card-icon">💀</span><span className="r-card-title">Pre-mortem 분석 리포트</span></div>{result.startsWith("오류:") ? <div className="err-msg">{result}</div> : <RichText text={result} />}</div><div className="report-sticky-actions"><div className="report-sticky-inner"><div style={{ marginTop: 10 }}><ReportExportBar entryForExport={{ modeId: "devil", title: clipTitle(idea), payload: { idea, fb, result } }} /></div><ReportAddonSection idea={idea} context={ideaContext} existingReport={result} personas={personas} globalKey={globalKey} /><CompetitorMapSection idea={idea} personas={personas} globalKey={globalKey} /><InvestorSearchSection idea={idea} personas={personas} globalKey={globalKey} /><ExpertSearchSection idea={idea} personas={personas} globalKey={globalKey} /><QuantumSimCTA idea={idea} context={ideaContext} existingReport={result} personas={personas} globalKey={globalKey} /><ReportTools reportText={result} personas={personas} globalKey={globalKey} /><SaveToArchiveBtn modeId="devil" title={clipTitle(idea)} payload={{ idea, fb, result }} /></div></div></>)}
+    {result && (<><div className="r-card" style={{ marginTop: 20, borderLeft: "3px solid var(--accent-error)" }}><div className="r-card-header"><span className="r-card-icon">💀</span><span className="r-card-title">Pre-mortem 분석 리포트</span></div>{result.startsWith("오류:") ? <div className="err-msg">{result}</div> : <RichText text={result} />}</div><div className="report-sticky-actions"><div className="report-sticky-inner"><div style={{ marginTop: 10 }}><ReportExportBar entryForExport={{ modeId: "devil", title: clipTitle(idea), payload: { idea, fb, result } }} /></div><DeepAnalysisPanel idea={idea} context={ideaContext} existingReport={result} personas={personas} globalKey={globalKey} /><ReportTools reportText={result} personas={personas} globalKey={globalKey} /><SaveToArchiveBtn modeId="devil" title={clipTitle(idea)} payload={{ idea, fb, result }} /></div></div></>)}
   </div>);
 }
 
@@ -2549,7 +2540,7 @@ function ScamperMode({ personas, globalKey, utilProvider, utilModel, utilApiKey 
     {Object.keys(results).length > 0 && !results.error && !results.__full && (<div className="scamper-grid" style={{ marginTop: 20 }}>{SCAMPER_AXES.map(a => (<div className="scamper-card" key={a.key}><div className="scamper-badge">{a.icon} {a.key} — {a.name}</div><div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 10 }}>{a.desc}</div><RichText text={results[a.key] || ""} /></div>))}</div>)}
     {results.__full && (<div className="r-card" style={{ marginTop: 20 }}><div className="r-card-header"><span className="r-card-icon">💡</span><span className="r-card-title">SCAMPER 전체 응답</span></div><p style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>섹션 형식이 달라 카드로 나누지 못했습니다. 전체 내용입니다.</p><RichText text={results.__full} /></div>)}
     {results.error && <div className="err-msg" style={{ marginTop: 16 }}>오류: {results.error}</div>}
-    {(Object.keys(results).length > 0 && !results.error) && !running && <><div className="report-sticky-actions"><div className="report-sticky-inner"><div style={{ marginTop: 10 }}><ReportExportBar entryForExport={{ modeId: "scamper", title: clipTitle(idea), payload: { idea, fb, results } }} /></div><ReportAddonSection idea={idea} context={ideaContext} existingReport={Object.values(results).join("\n\n")} personas={personas} globalKey={globalKey} /><CompetitorMapSection idea={idea} personas={personas} globalKey={globalKey} /><InvestorSearchSection idea={idea} personas={personas} globalKey={globalKey} /><ExpertSearchSection idea={idea} personas={personas} globalKey={globalKey} /><QuantumSimCTA idea={idea} context={ideaContext} existingReport={Object.values(results).join("\n\n")} personas={personas} globalKey={globalKey} /><ReportTools reportText={Object.values(results).join("\n\n")} personas={personas} globalKey={globalKey} /><SaveToArchiveBtn modeId="scamper" title={clipTitle(idea)} payload={{ idea, fb, results }} /></div></div></>}
+    {(Object.keys(results).length > 0 && !results.error) && !running && <><div className="report-sticky-actions"><div className="report-sticky-inner"><div style={{ marginTop: 10 }}><ReportExportBar entryForExport={{ modeId: "scamper", title: clipTitle(idea), payload: { idea, fb, results } }} /></div><DeepAnalysisPanel idea={idea} context={ideaContext} existingReport={Object.values(results).join("\n\n")} personas={personas} globalKey={globalKey} /><ReportTools reportText={Object.values(results).join("\n\n")} personas={personas} globalKey={globalKey} /><SaveToArchiveBtn modeId="scamper" title={clipTitle(idea)} payload={{ idea, fb, results }} /></div></div></>}
   </div>);
 }
 
@@ -2627,7 +2618,7 @@ ${ideas}
     </div>)}
     {analysis?.text && <div className="r-card" style={{ marginTop: 20 }}><RichText text={analysis.text} /></div>}
     {analysis?.error && <div className="err-msg" style={{ marginTop: 16 }}>오류: {analysis.error}</div>}
-    {analysis && !analysis.error && !running && <><div className="report-sticky-actions"><div className="report-sticky-inner"><div style={{ marginTop: 10 }}><ReportExportBar entryForExport={{ modeId: "dna", title: clipTitle(ideas.split("\n").find(l => l.trim()) || ideas), payload: { ideasText: ideas, fb, analysis } }} /></div><ReportAddonSection idea={ideas} context={ideaContext} existingReport={JSON.stringify(analysis)} personas={personas} globalKey={globalKey} /><CompetitorMapSection idea={ideas} personas={personas} globalKey={globalKey} /><InvestorSearchSection idea={ideas} personas={personas} globalKey={globalKey} /><ExpertSearchSection idea={ideas} personas={personas} globalKey={globalKey} /><QuantumSimCTA idea={ideas} context={ideaContext} existingReport={JSON.stringify(analysis)} personas={personas} globalKey={globalKey} /><ReportTools reportText={JSON.stringify(analysis)} personas={personas} globalKey={globalKey} /><SaveToArchiveBtn modeId="dna" title={clipTitle(ideas.split("\n").find(l => l.trim()) || ideas)} payload={{ ideasText: ideas, fb, analysis }} /></div></div></>}
+    {analysis && !analysis.error && !running && <><div className="report-sticky-actions"><div className="report-sticky-inner"><div style={{ marginTop: 10 }}><ReportExportBar entryForExport={{ modeId: "dna", title: clipTitle(ideas.split("\n").find(l => l.trim()) || ideas), payload: { ideasText: ideas, fb, analysis } }} /></div><DeepAnalysisPanel idea={ideas} context={ideaContext} existingReport={JSON.stringify(analysis)} personas={personas} globalKey={globalKey} /><ReportTools reportText={JSON.stringify(analysis)} personas={personas} globalKey={globalKey} /><SaveToArchiveBtn modeId="dna" title={clipTitle(ideas.split("\n").find(l => l.trim()) || ideas)} payload={{ ideasText: ideas, fb, analysis }} /></div></div></>}
   </div>);
 }
 
@@ -2677,7 +2668,7 @@ function MarketValidation({ personas, globalKey, utilProvider, utilModel, utilAp
     <FeedbackField value={fb} onChange={setFb} placeholder="예: 경쟁사 펀딩·최근 뉴스 위주로…" style={{ marginBottom: 16 }} />
     <button className="btn-cta" onClick={run} disabled={running || !idea.trim()}>{running ? <><span className="spinner" /> 시장 조사 중<span className="loading-dots" /></> : <>시장 검증 시작<CreditCostTag costKey="market" /></>}</button>
     {running && <QuoteRoller />}
-    {result && (<><div className="r-card" style={{ marginTop: 20, borderLeft: "3px solid var(--accent-success)" }}><div className="r-card-header"><span className="r-card-icon">🔍</span><span className="r-card-title">시장 검증 리포트</span></div>{result.startsWith("오류:") ? <div className="err-msg">{result}</div> : <RichText text={result} />}</div><div className="report-sticky-actions"><div className="report-sticky-inner"><div style={{ marginTop: 10 }}><ReportExportBar entryForExport={{ modeId: "market", title: clipTitle(idea), payload: { idea, fb, result } }} /></div><ReportAddonSection idea={idea} context={ideaContext} existingReport={result} personas={personas} globalKey={globalKey} /><CompetitorMapSection idea={idea} personas={personas} globalKey={globalKey} /><InvestorSearchSection idea={idea} personas={personas} globalKey={globalKey} /><ExpertSearchSection idea={idea} personas={personas} globalKey={globalKey} /><QuantumSimCTA idea={idea} context={ideaContext} existingReport={result} personas={personas} globalKey={globalKey} /><ReportTools reportText={result} personas={personas} globalKey={globalKey} /><SaveToArchiveBtn modeId="market" title={clipTitle(idea)} payload={{ idea, fb, result }} /></div></div></>)}
+    {result && (<><div className="r-card" style={{ marginTop: 20, borderLeft: "3px solid var(--accent-success)" }}><div className="r-card-header"><span className="r-card-icon">🔍</span><span className="r-card-title">시장 검증 리포트</span></div>{result.startsWith("오류:") ? <div className="err-msg">{result}</div> : <RichText text={result} />}</div><div className="report-sticky-actions"><div className="report-sticky-inner"><div style={{ marginTop: 10 }}><ReportExportBar entryForExport={{ modeId: "market", title: clipTitle(idea), payload: { idea, fb, result } }} /></div><DeepAnalysisPanel idea={idea} context={ideaContext} existingReport={result} personas={personas} globalKey={globalKey} /><ReportTools reportText={result} personas={personas} globalKey={globalKey} /><SaveToArchiveBtn modeId="market" title={clipTitle(idea)} payload={{ idea, fb, result }} /></div></div></>)}
   </div>);
 }
 
@@ -2711,7 +2702,7 @@ function CompeteScan({ personas, globalKey, utilProvider, utilModel, utilApiKey 
     <FeedbackField value={fb} onChange={setFb} placeholder="예: 국내 스타트업·해외 직접 경쟁사 위주로…" style={{ marginBottom: 12 }} />
     <button className="btn-cta" onClick={run} disabled={running || !idea.trim()}>{running ? <><span className="spinner" /> 경쟁 환경 스캔 중<span className="loading-dots" /></> : <>🎯 경쟁 환경 스캔<CreditCostTag costKey="compete" /></>}</button>
     {running && <QuoteRoller />}
-    {result && (<><div className="r-card" style={{ marginTop: 20, borderLeft: "3px solid #f59e0b" }}><div className="r-card-header"><span className="r-card-icon">🎯</span><span className="r-card-title">경쟁 환경 분석 리포트</span></div>{result.startsWith("오류:") ? <div className="err-msg">{result}</div> : <RichText text={result} />}</div><div className="report-sticky-actions"><div className="report-sticky-inner"><div style={{ marginTop: 10 }}><ReportExportBar entryForExport={{ modeId: "compete", title: clipTitle(idea), payload: { idea, fb, result } }} /></div><ReportAddonSection idea={idea} context={ideaContext} existingReport={result} personas={personas} globalKey={globalKey} /><CompetitorMapSection idea={idea} personas={personas} globalKey={globalKey} /><InvestorSearchSection idea={idea} personas={personas} globalKey={globalKey} /><ExpertSearchSection idea={idea} personas={personas} globalKey={globalKey} /><QuantumSimCTA idea={idea} context={ideaContext} existingReport={result} personas={personas} globalKey={globalKey} /><ReportTools reportText={result} personas={personas} globalKey={globalKey} /><SaveToArchiveBtn modeId="compete" title={clipTitle(idea)} payload={{ idea, fb, result }} /></div></div></>)}
+    {result && (<><div className="r-card" style={{ marginTop: 20, borderLeft: "3px solid #f59e0b" }}><div className="r-card-header"><span className="r-card-icon">🎯</span><span className="r-card-title">경쟁 환경 분석 리포트</span></div>{result.startsWith("오류:") ? <div className="err-msg">{result}</div> : <RichText text={result} />}</div><div className="report-sticky-actions"><div className="report-sticky-inner"><div style={{ marginTop: 10 }}><ReportExportBar entryForExport={{ modeId: "compete", title: clipTitle(idea), payload: { idea, fb, result } }} /></div><DeepAnalysisPanel idea={idea} context={ideaContext} existingReport={result} personas={personas} globalKey={globalKey} /><ReportTools reportText={result} personas={personas} globalKey={globalKey} /><SaveToArchiveBtn modeId="compete" title={clipTitle(idea)} payload={{ idea, fb, result }} /></div></div></>)}
   </div>);
 }
 
@@ -2917,11 +2908,7 @@ function HyperNicheExplorer({ personas, globalKey, utilProvider, utilModel, util
               <div style={{ marginTop: 10 }}>
                 <ReportExportBar entryForExport={{ modeId: "hyperniche", title: clipTitle(input), payload: { input, fb, ideas } }} />
               </div>
-              <ReportAddonSection idea={input} context={ideaContext} existingReport={JSON.stringify(ideas)} personas={personas} globalKey={globalKey} />
-              <CompetitorMapSection idea={input} personas={personas} globalKey={globalKey} />
-              <InvestorSearchSection idea={input} personas={personas} globalKey={globalKey} />
-              <ExpertSearchSection idea={input} personas={personas} globalKey={globalKey} />
-              <QuantumSimCTA idea={input} context={ideaContext} existingReport={JSON.stringify(ideas)} personas={personas} globalKey={globalKey} />
+              <DeepAnalysisPanel idea={input} context={ideaContext} existingReport={JSON.stringify(ideas)} personas={personas} globalKey={globalKey} />
               <ReportTools reportText={JSON.stringify(ideas)} personas={personas} globalKey={globalKey} />
               <SaveToArchiveBtn modeId="hyperniche" title={clipTitle(input)} payload={{ input, fb, ideas }} />
             </div>
@@ -2938,11 +2925,7 @@ function HyperNicheExplorer({ personas, globalKey, utilProvider, utilModel, util
               <div style={{ marginTop: 10 }}>
                 <ReportExportBar entryForExport={{ modeId: "hyperniche", title: clipTitle(input), payload: { input, fb, rawFallback } }} />
               </div>
-              <ReportAddonSection idea={input} context={ideaContext} existingReport={JSON.stringify(ideas)} personas={personas} globalKey={globalKey} />
-              <CompetitorMapSection idea={input} personas={personas} globalKey={globalKey} />
-              <InvestorSearchSection idea={input} personas={personas} globalKey={globalKey} />
-              <ExpertSearchSection idea={input} personas={personas} globalKey={globalKey} />
-              <QuantumSimCTA idea={input} context={ideaContext} existingReport={rawFallback} personas={personas} globalKey={globalKey} />
+              <DeepAnalysisPanel idea={input} context={ideaContext} existingReport={rawFallback} personas={personas} globalKey={globalKey} />
               <ReportTools reportText={rawFallback} personas={personas} globalKey={globalKey} />
               <SaveToArchiveBtn modeId="hyperniche" title={clipTitle(input)} payload={{ input, fb, rawFallback }} />
             </div>
@@ -3779,11 +3762,7 @@ function TotDeepDive({ personas, globalKey, totProvider, totModel, totApiKey, on
           <div style={{ marginTop: 10 }}>
             <ReportExportBar entryForExport={{ modeId: "tot", title: clipTitle(idea), payload: { idea, context, branches, evaluation, solution } }} />
           </div>
-          <ReportAddonSection idea={idea} context={ideaContext} existingReport={solution} personas={personas} globalKey={globalKey} />
-          <CompetitorMapSection idea={idea} personas={personas} globalKey={globalKey} />
-          <InvestorSearchSection idea={idea} personas={personas} globalKey={globalKey} />
-          <ExpertSearchSection idea={idea} personas={personas} globalKey={globalKey} />
-          <QuantumSimCTA idea={idea} context={ideaContext} existingReport={solution} personas={personas} globalKey={globalKey} />
+          <DeepAnalysisPanel idea={idea} context={ideaContext} existingReport={solution} personas={personas} globalKey={globalKey} />
           <ReportTools reportText={solution} personas={personas} globalKey={globalKey} />
           <SaveToArchiveBtn modeId="tot" title={clipTitle(idea)} payload={{ idea, context, branches, evaluation, solution }} />
         </div>
@@ -4211,16 +4190,7 @@ function ArchiveView({ personas, globalKey, onGoHome }) {
             <div className="history-detail-footer">
               <div className="history-detail-footer-inner">
                 <ReportExportBar entryForExport={{ modeId: viewItem.modeId, title: viewItem.title, payload: viewItem.payload }} />
-                <ReportAddonSection idea={extractIdeaFromPayload(viewItem)} context={viewItem.payload?.fb || viewItem.payload?.context || ""} existingReport={extractReportFromPayload(viewItem)} personas={personas} globalKey={globalKey} />
-                <CompetitorMapSection idea={extractIdeaFromPayload(viewItem)} personas={personas} globalKey={globalKey} />
-                <InvestorSearchSection idea={extractIdeaFromPayload(viewItem)} personas={personas} globalKey={globalKey} />
-                <ExpertSearchSection idea={extractIdeaFromPayload(viewItem)} personas={personas} globalKey={globalKey} />
-                <QuantumSimCTA
-                  idea={extractIdeaFromPayload(viewItem)}
-                  context={viewItem.payload?.context || viewItem.payload?.fb || ""}
-                  existingReport={extractReportFromPayload(viewItem)}
-                  personas={personas} globalKey={globalKey}
-                />
+                <DeepAnalysisPanel idea={extractIdeaFromPayload(viewItem)} context={viewItem.payload?.fb || viewItem.payload?.context || ""} existingReport={extractReportFromPayload(viewItem)} personas={personas} globalKey={globalKey} />
                 <ReportTools reportText={extractReportFromPayload(viewItem)} personas={personas} globalKey={globalKey} />
               </div>
             </div>
@@ -4573,13 +4543,18 @@ function ReportExportBar({ entryForExport }) {
 }
 
 const REPORT_ADDONS = [
-  { key: "branding", icon: "🎨", label: "브랜딩 플랜" },
-  { key: "viral", icon: "🚀", label: "바이럴 전략" },
-  { key: "vc", icon: "📋", label: "VC 투자제안서" },
-  { key: "legal", icon: "⚖️", label: "법무 리스크 점검" },
-  { key: "growth", icon: "📈", label: "시장 성장도 리포트" },
-  { key: "cost", icon: "💰", label: "운영비 시뮬레이션" },
-  { key: "revenue", icon: "💎", label: "수익화 시점 의견" },
+  { key: "branding", icon: "🎨", label: "브랜딩 플랜", desc: "아이덴티티·네이밍·포지셔닝" },
+  { key: "viral", icon: "🚀", label: "바이럴 전략", desc: "성장 해킹·콘텐츠·채널" },
+  { key: "vc", icon: "📋", label: "VC 투자제안서", desc: "시리즈A 수준 IR 덱" },
+  { key: "legal", icon: "⚖️", label: "법무 리스크", desc: "규제·IP·개인정보보호" },
+  { key: "growth", icon: "📈", label: "시장 성장도", desc: "TAM·CAGR·성숙도 분석" },
+  { key: "cost", icon: "💰", label: "운영비 시뮬레이션", desc: "개발·인프라·번레이트" },
+  { key: "revenue", icon: "💎", label: "수익화 시점", desc: "수익 모델·MRR·BEP" },
+];
+
+const ADDON_CATEGORIES = [
+  { id: "strategy", label: "전략 & 브랜딩", color: "#7c3aed", keys: ["branding", "viral", "vc"] },
+  { id: "finance", label: "재무 & 리서치", color: "#059669", keys: ["growth", "cost", "revenue", "legal"] },
 ];
 
 function ReportAddonSection({ idea, context, existingReport, personas, globalKey }) {
@@ -4590,7 +4565,10 @@ function ReportAddonSection({ idea, context, existingReport, personas, globalKey
 
   const generate = async (key) => {
     if (results[key]) { setOpen((p) => ({ ...p, [key]: !p[key] })); return; }
-    if (Object.values(loading).some((v) => v)) return;
+    if (Object.values(loading).some((v) => v)) {
+      showAppToast("다른 분석이 진행 중입니다", "info", 2000);
+      return;
+    }
     const costKey = (key === "branding" || key === "viral") ? key : "report_addon";
     if (!spend(costKey)) return; setLoading((p) => ({ ...p, [key]: true }));
     try {
@@ -4612,29 +4590,38 @@ function ReportAddonSection({ idea, context, existingReport, personas, globalKey
   };
 
   return (
-    <div style={{ marginTop: 16 }}>
-      <div className="s-label">📊 추가 분석 옵션</div>
-      <div className="report-addon-grid">
-        {REPORT_ADDONS.map((a) => (
-          <button
-            key={a.key}
-            className={`report-addon-btn${results[a.key] ? " active" : ""}`}
-            onClick={() => generate(a.key)}
-            disabled={!!loading[a.key]}
-          >
-            {loading[a.key] ? <span className="spinner" style={{ width: 12, height: 12 }} /> : a.icon}
-            {a.label}
-          </button>
-        ))}
-      </div>
+    <div>
+      {ADDON_CATEGORIES.map((cat) => (
+        <Fragment key={cat.id}>
+          <div className="deep-analysis-cat-label">
+            <span className="deep-analysis-cat-dot" style={{ background: cat.color }} />
+            {cat.label}
+          </div>
+          <div className="report-addon-grid">
+            {REPORT_ADDONS.filter((a) => cat.keys.includes(a.key)).map((a) => (
+              <button
+                key={a.key}
+                className={`report-addon-btn${results[a.key] ? " active" : ""}`}
+                onClick={() => generate(a.key)}
+                disabled={!!loading[a.key]}
+              >
+                <span className="addon-icon-label">
+                  {loading[a.key] ? <span className="spinner" style={{ width: 13, height: 13 }} /> : a.icon} {a.label}
+                </span>
+                <span className="addon-desc">{a.desc}</span>
+              </button>
+            ))}
+          </div>
+        </Fragment>
+      ))}
       {REPORT_ADDONS.map((a) => open[a.key] && results[a.key] ? (
         <div key={a.key} className="r-card" style={{ marginTop: 10, borderLeft: "3px solid var(--accent-primary)", animation: "fiu 0.3s ease-out" }}>
-          <div className="r-card-header">
+          <div className="addon-result-header" onClick={() => setOpen((p) => ({ ...p, [a.key]: !p[a.key] }))}>
             <span className="r-card-icon">{a.icon}</span>
-            <span className="r-card-title">{a.label}</span>
-            <button type="button" style={{ marginLeft: "auto", border: "none", background: "none", cursor: "pointer", fontSize: 14, color: "var(--text-muted)" }} onClick={() => setOpen((p) => ({ ...p, [a.key]: false }))}>▲</button>
+            <span className="r-card-title" style={{ flex: 1 }}>{a.label}</span>
+            <span className="addon-result-collapse" data-open={String(!!open[a.key])}>▾</span>
           </div>
-          <div className="report-scroll-box">
+          <div className="report-scroll-box" style={{ padding: "0 14px 14px" }}>
             {String(results[a.key]).startsWith("오류:") ? <div className="err-msg">{results[a.key]}</div> : <RichText text={results[a.key]} />}
           </div>
         </div>
@@ -4740,8 +4727,11 @@ function CompetitorMapSection({ idea, personas, globalKey }) {
 
   return (
     <div style={{ marginTop: 10 }}>
-      <button className="report-addon-btn" onClick={generate} disabled={loading} style={{ width: "100%" }}>
-        {loading ? <><span className="spinner" style={{ width: 12, height: 12 }} /> 지도 데이터 생성 중<span className="loading-dots" /></> : "🗺️ 유사 사업 분포 지도"}
+      <button className="report-addon-btn full-width" onClick={generate} disabled={loading}>
+        <span className="addon-icon-label">
+          {loading ? <><span className="spinner" style={{ width: 13, height: 13 }} /> 지도 데이터 생성 중<span className="loading-dots" /></> : <>🗺️ 유사 사업 분포 지도</>}
+        </span>
+        <span className="addon-desc">국내외 경쟁사 위치 시각화</span>
       </button>
       {open && mapData && (
         <div className="r-card" style={{ marginTop: 10, animation: "fiu 0.3s ease-out" }}>
@@ -4816,8 +4806,11 @@ function ExpertSearchSection({ idea, personas, globalKey }) {
 
   return (
     <div style={{ marginTop: 10 }}>
-      <button className="report-addon-btn" onClick={generate} disabled={loading} style={{ width: "100%" }}>
-        {loading ? <><span className="spinner" style={{ width: 12, height: 12 }} /> 전문가 서칭 중<span className="loading-dots" /></> : "👨‍🔬 전문가 & 논문 서칭"}
+      <button className="report-addon-btn full-width" onClick={generate} disabled={loading}>
+        <span className="addon-icon-label">
+          {loading ? <><span className="spinner" style={{ width: 13, height: 13 }} /> 전문가 서칭 중<span className="loading-dots" /></> : <>👨‍🔬 전문가 & 논문 서칭</>}
+        </span>
+        <span className="addon-desc">핵심 인재·관련 논문·커뮤니티</span>
       </button>
       {open && experts && (
         <div className="r-card" style={{ marginTop: 10, animation: "fiu 0.3s ease-out" }}>
@@ -4907,8 +4900,11 @@ function InvestorSearchSection({ idea, personas, globalKey }) {
 
   return (
     <div style={{ marginTop: 10 }}>
-      <button className="report-addon-btn" onClick={generate} disabled={loading} style={{ width: "100%" }}>
-        {loading ? <><span className="spinner" style={{ width: 12, height: 12 }} /> 투자처 서칭 중<span className="loading-dots" /></> : "💰 잠재 투자처 TOP10"}
+      <button className="report-addon-btn full-width" onClick={generate} disabled={loading}>
+        <span className="addon-icon-label">
+          {loading ? <><span className="spinner" style={{ width: 13, height: 13 }} /> 투자처 서칭 중<span className="loading-dots" /></> : <>💰 잠재 투자처 TOP10</>}
+        </span>
+        <span className="addon-desc">국내외 VC·엔젤·CVC 매칭</span>
       </button>
       {open && investors && (
         <div className="r-card" style={{ marginTop: 10, animation: "fiu 0.3s ease-out" }}>
@@ -4968,6 +4964,40 @@ function InvestorSearchSection({ idea, personas, globalKey }) {
               })}
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Deep Analysis Panel (unified wrapper) ───
+function DeepAnalysisPanel({ idea, context, existingReport, personas, globalKey }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="deep-analysis-panel">
+      <button type="button" className="deep-analysis-toggle" onClick={() => setOpen(!open)}>
+        <div className="deep-analysis-toggle-left">
+          <span className="deep-analysis-toggle-icon">🔬</span>
+          <div>
+            <div className="deep-analysis-toggle-title">추가 분석 도구</div>
+            <div className="deep-analysis-toggle-desc">전략·재무·리서치·시뮬레이션</div>
+          </div>
+        </div>
+        <span className="deep-analysis-arrow" data-open={open}>▾</span>
+      </button>
+      {open && (
+        <div className="deep-analysis-body">
+          <ReportAddonSection idea={idea} context={context} existingReport={existingReport} personas={personas} globalKey={globalKey} />
+          <div className="deep-analysis-cat-label">
+            <span className="deep-analysis-cat-dot" style={{ background: "#3182f6" }} />
+            탐색 & 시뮬레이션
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <CompetitorMapSection idea={idea} personas={personas} globalKey={globalKey} />
+            <InvestorSearchSection idea={idea} personas={personas} globalKey={globalKey} />
+            <ExpertSearchSection idea={idea} personas={personas} globalKey={globalKey} />
+          </div>
+          <QuantumSimCTA idea={idea} context={context} existingReport={existingReport} personas={personas} globalKey={globalKey} />
         </div>
       )}
     </div>
