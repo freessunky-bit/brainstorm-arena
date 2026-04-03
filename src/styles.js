@@ -2480,6 +2480,15 @@ export const STYLES = `
     border: 3px solid var(--bg-surface-2); border-top-color: #6366f1;
     animation: spin 0.8s linear infinite;
   }
+  .proto-bg-btn {
+    margin-top: 10px; padding: 10px 22px; border-radius: 12px;
+    border: 1px solid var(--glass-border); background: var(--bg-surface-2);
+    color: var(--text-secondary); font-size: 13px; font-weight: 600;
+    cursor: pointer; transition: background 0.15s, border-color 0.15s, transform 0.1s;
+    font-family: var(--font-sans); letter-spacing: -0.01em;
+  }
+  .proto-bg-btn:hover { background: var(--bg-surface-3); border-color: var(--accent-primary); transform: scale(1.02); }
+  .proto-bg-btn:active { transform: scale(0.98); }
 
   /* Phase 2: Skin Casting */
   .proto-skin-container {

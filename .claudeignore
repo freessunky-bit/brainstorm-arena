@@ -1,0 +1,45 @@
+# Claude Code 토큰 절약용 - 읽기 차단 목록
+# Claude가 이 파일들을 인덱싱/읽지 않아 불필요한 토큰 낭비를 방지합니다
+
+# 의존성
+node_modules/
+
+# 빌드 결과물
+dist/
+build/
+.vite/
+
+# 잠금 파일 (대용량, Claude가 읽을 필요 없음)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# 로그
+*.log
+logs/
+
+# 캐시
+.cache/
+.eslintcache
+
+# 환경변수 (보안 + 불필요)
+.env
+.env.*
+
+# 바이너리/미디어
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.svg
+*.ico
+*.mp4
+*.mp3
+*.woff
+*.woff2
+*.ttf
+*.eot
+
+# bugscan 폴더 (분석 산출물)
+bugscan/

@@ -57,7 +57,7 @@ import {
 import { STYLES } from "./styles.js";
 
 // ─── 앱 업데이트 시점 (코드 수정 시 반드시 갱신) ───
-const LAST_UPDATED = "2026-04-03 18:30";
+const LAST_UPDATED = "2026-04-03 20:00";
 
 const MODE_TAGLINES = {
   tournament: [
@@ -3805,21 +3805,59 @@ function TotDeepDive({ personas, globalKey, totProvider, totModel, totApiKey, on
 }
 
 // ─── Web App Prototyper ───
+// Module-level generation cache — survives component unmount for background processing
+const _protoGen = { running: false, itemId: null, skinKey: null, result: null, error: null };
+
 function WebAppPrototyper({ item, personas, globalKey, onClose }) {
-  const [phase, setPhase] = useState("skin");
-  const [selectedSkin, setSelectedSkin] = useState(null);
-  const [result, setResult] = useState("");
-  const [generating, setGenerating] = useState(false);
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
+
+  // Restore from cache if available
+  const hasCached = _protoGen.itemId === item.id && _protoGen.result;
+  const isRunning = _protoGen.running && _protoGen.itemId === item.id;
+
+  const [phase, setPhase] = useState(hasCached ? "result" : isRunning ? "generating" : "skin");
+  const [selectedSkin, setSelectedSkin] = useState(hasCached ? _protoGen.skinKey : isRunning ? _protoGen.skinKey : null);
+  const [result, setResult] = useState(hasCached ? _protoGen.result : "");
+  const [generating, setGenerating] = useState(isRunning);
   const [copied, setCopied] = useState(false);
   const [closing, setClosing] = useState(false);
   const [viewRaw, setViewRaw] = useState(false);
   const { notifyStart, notifyDone } = useTaskNotify("prototyper");
 
+  // Clear consumed cache
+  useEffect(() => { if (hasCached) { _protoGen.result = null; _protoGen.running = false; } }, []);
+
+  // Poll for background result when reopening during generation
+  useEffect(() => {
+    if (!isRunning || hasCached) return;
+    const poll = setInterval(() => {
+      if (_protoGen.result && _protoGen.itemId === item.id) {
+        clearInterval(poll);
+        setResult(_protoGen.result);
+        setSelectedSkin(_protoGen.skinKey);
+        setPhase("result");
+        setGenerating(false);
+        _protoGen.result = null;
+        _protoGen.running = false;
+      } else if (!_protoGen.running) {
+        clearInterval(poll);
+        if (_protoGen.error) { alert(`프롬프트 생성 오류: ${_protoGen.error}`); _protoGen.error = null; }
+        setPhase("skin");
+        setGenerating(false);
+      }
+    }, 500);
+    return () => clearInterval(poll);
+  }, [item.id]);
+
   const ideaText = useMemo(() => {
     const p = item.payload;
     if (typeof p === "string") return p;
     if (p?.idea) return p.idea;
-    if (p?.combined_concept) return `${p.combined_concept} - ${p.value_proposition || ""}`;
+    if (p?.input) return p.input;
+    if (p?.ideasText) return p.ideasText;
+    if (p?.ctx) return p.ctx;
+    if (p?.combined_concept) return `${p.combined_concept}${p.value_proposition ? " - " + p.value_proposition : ""}`;
     if (p?.summary) return typeof p.summary === "string" ? p.summary : JSON.stringify(p.summary).slice(0, 500);
     return item.title || JSON.stringify(p).slice(0, 500);
   }, [item]);
@@ -3843,24 +3881,54 @@ function WebAppPrototyper({ item, personas, globalKey, onClose }) {
     setGenerating(true);
     setPhase("generating");
     notifyStart();
+
+    // Mark module-level cache
+    _protoGen.running = true;
+    _protoGen.itemId = item.id;
+    _protoGen.skinKey = selectedSkin;
+    _protoGen.result = null;
+    _protoGen.error = null;
+
     const persona = getPersona();
-    if (!persona) { alert("API 키가 필요합니다"); setPhase("skin"); setGenerating(false); return; }
+    if (!persona) {
+      alert("API 키가 필요합니다");
+      setPhase("skin"); setGenerating(false);
+      _protoGen.running = false;
+      return;
+    }
     const skin = PROTOTYPER_SKINS[selectedSkin];
     const userMsg = `[원본 아이디어]\n${ideaText}\n\n[선택 스킨: ${skin.name}]\n${skin.cssGuide}\n\n위 아이디어를 Cursor AI / Claude Code에서 즉시 사용 가능한 완성형 웹앱 개발 마스터 프롬프트로 생성해주세요. 사용자 요구사항, 기술 스택, UI/UX 설계, 데이터 모델, API 설계, 배포 전략까지 포괄하는 종합 프롬프트를 작성하세요.`;
+
+    // Capture notifyDone ref for use after potential unmount
+    const _notifyDone = notifyDone;
+    const _ideaText = ideaText;
+
     try {
       const raw = await callAI(
         { ...persona, role: PROTOTYPER_SYNTH_SYSTEM },
         [{ role: "user", content: userMsg }]
       );
       if (!raw || !raw.trim()) throw new Error("AI 응답이 비어있습니다. 다시 시도해 주세요.");
-      setResult(raw);
-      setPhase("result");
-      notifyDone(clipTitle(ideaText));
+
+      _protoGen.running = false;
+      if (mountedRef.current) {
+        setResult(raw);
+        setPhase("result");
+        setGenerating(false);
+      } else {
+        // Component unmounted — store result for later retrieval
+        _protoGen.result = raw;
+      }
+      _notifyDone(clipTitle(_ideaText));
     } catch (err) {
-      alert(`프롬프트 생성 오류: ${err.message}`);
-      setPhase("skin");
+      _protoGen.running = false;
+      _protoGen.error = err.message;
+      if (mountedRef.current) {
+        alert(`프롬프트 생성 오류: ${err.message}`);
+        setPhase("skin");
+        setGenerating(false);
+      }
     }
-    setGenerating(false);
   };
 
   const copyToClipboard = () => {
@@ -3932,6 +4000,9 @@ function WebAppPrototyper({ item, personas, globalKey, onClose }) {
             <div className="proto-spinner" />
             <div className="proto-loading-title">마스터 프롬프트 합성 중…</div>
             <div className="proto-loading-sub">아이디어와 스킨 가이드를 바탕으로 작성 중입니다</div>
+            <button type="button" className="proto-bg-btn" onClick={handleClose}>
+              🏠 백그라운드에서 계속 — 완료 시 알림
+            </button>
           </div>
         )}
 
