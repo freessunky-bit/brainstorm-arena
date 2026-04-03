@@ -576,7 +576,8 @@ export const STYLES = `
   }
 
   .target-bar { display: flex; gap: 6px; margin-bottom: 18px; flex-wrap: wrap; align-items: center; }
-  .target-chip-group { display: flex; align-items: center; gap: 0; background: var(--bg-surface-2); border: 1px solid var(--glass-border); border-radius: 10px; overflow: hidden; }
+  .target-chip-group { display: flex; align-items: center; gap: 0; background: var(--bg-surface-2); border: 1px solid var(--glass-border); border-radius: 10px; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; scrollbar-width: none; max-width: 100%; flex-shrink: 1; }
+  .target-chip-group::-webkit-scrollbar { display: none; }
   .target-chip-label { font-size: 10px; font-weight: 700; color: var(--text-muted); padding: 6px 10px; text-transform: uppercase; letter-spacing: 0.04em; border-right: 1px solid var(--glass-border); user-select: none; white-space: nowrap; }
   .target-chip { padding: 6px 12px; font-size: 12px; font-weight: 600; color: var(--text-secondary); cursor: pointer; border: none; background: transparent; font-family: var(--font-sans); transition: all 0.15s ease; white-space: nowrap; }
   .target-chip:hover { background: rgba(49,130,246,0.06); color: var(--text-primary); }
@@ -903,7 +904,7 @@ export const STYLES = `
   .history-detail-footer::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 99px; }
   .history-detail-footer-inner { padding: 12px 20px 16px; }
 
-  .footer { text-align: center; padding: 20px 0 16px; border-top: 1px solid var(--glass-border); margin-top: 20px; position: relative; z-index: -1; }
+  .footer { text-align: center; padding: 20px 0 16px; border-top: 1px solid var(--glass-border); margin-top: 20px; }
   .footer span { font-size: 11px; color: var(--text-muted); letter-spacing: 0.5px; font-weight: 500; }
 
   /* ── 9:16 Mobile (max-width: 480px) ── */
@@ -2599,6 +2600,7 @@ export const STYLES = `
     padding: 16px 18px 20px; font-family: 'JetBrains Mono', 'Fira Code', 'Menlo', monospace;
     font-size: 12.5px; line-height: 1.65; white-space: pre-wrap;
     word-break: break-word; max-height: min(58vh, 520px); overflow-y: auto;
+    color: #cdd6f4;
   }
   .proto-code-content::-webkit-scrollbar { width: 6px; }
   .proto-code-content::-webkit-scrollbar-track { background: transparent; }

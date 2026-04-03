@@ -4,6 +4,39 @@
 
 ---
 
+## 2026-04-03 #21 — 모바일 6개 버그 수정
+
+### 변경
+
+#### ① 국가 탭 "아시아" 말림
+- `.target-chip-group` `overflow: hidden` → `overflow-x: auto; overflow-y: hidden`
+- 스크롤바 숨김(`scrollbar-width: none`) + `-webkit-overflow-scrolling: touch`
+
+#### ② 갤럭시 파일 불러오기 (PPT/엑셀 등)
+- `DOCUMENT_ACCEPT` MIME 타입 제거, 확장자 전용으로 변경 (`.pdf,.ppt,.pptx,.xls,.xlsx,.csv`)
+- Android 미디어 피커 대신 파일 관리자 직접 오픈
+- `IMAGE_ACCEPT` 도 `image/*` → 명시적 MIME 타입으로 변경
+
+#### ③ 홈 하단 MOJITO Labs 푸터 사라짐
+- `.footer` CSS에서 `position: relative; z-index: -1` 제거
+- 푸터가 다른 요소 뒤에 숨겨지던 문제 수정
+
+#### ④ 시장검증 오류 "폴백도 비어있음"
+- `api.js` Claude 응답 파싱 개선: `text` 타입 블록만 필터링 → 비 text 블록(thinking 등)이 빈 값 반환하던 문제 수정
+- `stop_reason: max_tokens`일 때 명시적 한국어 오류 메시지 제공
+- 폴백 로직에 `apiKey` 존재 여부 사전 체크 추가
+- 폴백 빈 응답 시 메시지 명확화
+
+#### ⑤ 웹앱 프로토타이퍼 내용 미표시
+- api.js 동일 수정으로 Claude 응답 text 블록 필터링 해결
+- `generatePrompt`에서 빈 `raw` 체크 추가 → 빈 결과 시 스킨 선택 화면으로 복귀 + 에러 알림
+- `.proto-code-content` CSS에 `color: #cdd6f4` 명시 (상속 의존 제거)
+
+### 관련 파일
+- `src/App.jsx`, `src/api.js`, `src/styles.js`
+
+---
+
 ## 2026-04-03 #20 — 설정 모달 최종 업데이트 시점 표기 + 프로젝트 규칙 정의
 
 ### 변경

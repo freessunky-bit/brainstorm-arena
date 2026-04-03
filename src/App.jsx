@@ -57,7 +57,7 @@ import {
 import { STYLES } from "./styles.js";
 
 // ─── 앱 업데이트 시점 (코드 수정 시 반드시 갱신) ───
-const LAST_UPDATED = "2026-04-03 15:20";
+const LAST_UPDATED = "2026-04-03 17:30";
 
 const MODE_TAGLINES = {
   tournament: [
@@ -1664,8 +1664,8 @@ function IdeaStackPopover({ onSelect, onClose, personas, globalKey, utilProvider
   const docInputRef = useRef(null);
   const imgInputRef = useRef(null);
 
-  const DOCUMENT_ACCEPT = "application/pdf,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.pdf,.ppt,.pptx,.xls,.xlsx,.csv";
-  const IMAGE_ACCEPT = "image/*";
+  const DOCUMENT_ACCEPT = ".pdf,.ppt,.pptx,.xls,.xlsx,.csv";
+  const IMAGE_ACCEPT = "image/png,image/jpeg,image/webp,image/gif";
 
   const openDocPicker = () => docInputRef.current?.click();
   const openImagePicker = () => imgInputRef.current?.click();
@@ -2659,8 +2659,9 @@ function MarketValidation({ personas, globalKey, utilProvider, utilModel, utilAp
       LOG.warn?.("시장검증 웹검색 실패, 폴백:", e1?.message);
       try {
         const p = pickUsablePersona(personas, globalKey);
-        out = await callAI(p, [{ role: "user", content: `**투자 심사급 시장 분석** (웹 검색 불가 시 지식 기반):\n\n아이디어: ${idea}${formatOptionalDirectionFb(fb)}${formatIdeaContext(ideaContext)}${tInfo}\n\n## TAM/SAM/SOM (보텀업 추정)\n## 경쟁 매핑 (직접 3개 + 간접 3개 + 빅테크 진입 가능성)\n## 차별화 기회 (Unmet Need, 가치 곡선)\n## 리스크 (시장/기술/규제/경쟁)\n## GTM 전략 (Beachhead → 확장 경로)\n## 투자 매력도 판정\n\n실제 기업·시장 레퍼런스를 반드시 포함하세요.\n한국어로.` }]);
-        if (!out || !out.trim()) throw new Error("폴백 응답도 비어 있음");
+        if (!p?.apiKey) throw new Error("API 키가 설정되지 않았습니다. 설정(⚙️)에서 API 키를 입력해 주세요.");
+        out = await callAI(p, [{ role: "user", content: `**투자 심사급 시장 분석** (지식 기반):\n\n아이디어: ${idea}${formatOptionalDirectionFb(fb)}${formatIdeaContext(ideaContext)}${tInfo}\n\n## 1. TAM/SAM/SOM (보텀업 추정)\n## 2. 경쟁 매핑 (직접 3개 + 간접 3개 + 빅테크 진입 가능성)\n## 3. 차별화 기회 (Unmet Need, 가치 곡선)\n## 4. 리스크 (시장/기술/규제/경쟁)\n## 5. GTM 전략 (Beachhead → 확장 경로)\n## 6. 투자 매력도 판정\n\n실제 기업·시장 레퍼런스를 반드시 포함하세요. 한국어로.` }]);
+        if (!out || !out.trim()) throw new Error("AI 응답이 비어있습니다. 잠시 후 다시 시도해 주세요.");
         setResult(out);
       } catch (e2) { out = `오류: ${e2.message}`; setResult(out); }
     }
@@ -3842,6 +3843,7 @@ function WebAppPrototyper({ item, personas, globalKey, onClose }) {
         { ...persona, role: PROTOTYPER_SYNTH_SYSTEM },
         [{ role: "user", content: userMsg }]
       );
+      if (!raw || !raw.trim()) throw new Error("AI 응답이 비어있습니다. 다시 시도해 주세요.");
       setResult(raw);
       setPhase("result");
     } catch (err) {

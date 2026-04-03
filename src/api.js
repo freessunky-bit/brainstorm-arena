@@ -106,7 +106,10 @@ export async function callAI(persona, messages, systemPrompt) {
         const data = await res.json();
         if (data.error) { LOG.error(`Claude API error: ${data.error.message}`); throw new Error(data.error.message); }
         LOG.info("Claude OK");
-        return data.content?.map(c => c.text).join("\n") || "";
+        const textBlocks = (data.content || []).filter(c => c.type === "text" && c.text);
+        const joined = textBlocks.map(c => c.text).join("\n").trim();
+        if (!joined && data.stop_reason === "max_tokens") throw new Error("응답이 너무 길어 잘렸습니다. 아이디어를 짧게 줄이거나 다시 시도해 주세요.");
+        return joined;
       }
       if (provider === "openai") {
         if (!hasKey) { LOG.error("OpenAI: no API key"); throw new Error("OpenAI API 키가 필요합니다"); }
