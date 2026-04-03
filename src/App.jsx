@@ -336,9 +336,14 @@ function QuoteRoller() {
     <div>
       {showGuide && (
         <div className="bg-task-guide">
-          <span className="bg-task-guide-icon">💡</span>
+          <div className="bg-task-guide-icon-wrap">
+            <span className="bg-task-guide-icon">💡</span>
+          </div>
           <div>
-            <div className="bg-task-guide-title">백그라운드 분석 진행 중</div>
+            <div className="bg-task-guide-title">
+              <span className="bg-task-pulse" />
+              백그라운드 분석 진행 중
+            </div>
             <div className="bg-task-guide-desc">다른 메뉴를 자유롭게 이용하셔도 됩니다. 완료 시 토스트 알림으로 안내해 드릴게요.</div>
           </div>
         </div>
@@ -1526,6 +1531,18 @@ function MatchCard({ m, roundIdx, matchIdx, expanded, onToggle, roundColor }) {
   const isBye = m.b === "BYE";
   const aWin = m.winner === m.a;
   const bWin = m.winner === m.b;
+  const { save } = useArchive();
+
+  const archiveIdea = (e, name, isWinner, scores, total) => {
+    e.stopPropagation();
+    save({
+      modeId: "tournament",
+      modeName: "아이디어 토너먼트",
+      modeIcon: "🏆",
+      title: name,
+      payload: { idea: name, isWinner, scores, total, reason: m.reason, matchIdx, roundIdx },
+    });
+  };
 
   return (
     <div style={{ background: "var(--bg-surface-1)", border: "1px solid var(--glass-border)", borderRadius: 12, marginBottom: 10, overflow: "hidden", boxShadow: "var(--shadow-xs)", animation: "fiu 0.4s cubic-bezier(0.33,1,0.68,1)", animationDelay: `${matchIdx * 0.04}s`, animationFillMode: "both" }}>
@@ -1567,6 +1584,16 @@ function MatchCard({ m, roundIdx, matchIdx, expanded, onToggle, roundColor }) {
           <div style={{ padding: "10px 12px", background: "var(--bg-surface-2)", borderRadius: 10, fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.65, borderLeft: `3px solid ${rc}` }}>
             <div style={{ fontWeight: 700, color: rc, fontSize: 11, marginBottom: 4 }}>📋 판정 근거</div>
             {m.reason || "AI 판정"}
+          </div>
+          <div style={{ marginTop: 10, display: "flex", gap: 6 }}>
+            <button type="button" className="idea-stack-btn" style={{ flex: 1, fontSize: 11, padding: "6px 10px", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}
+              onClick={(e) => archiveIdea(e, m.a, aWin, sa, totalA)}>
+              📦 {aWin && "🏆 "}A 아카이브 저장
+            </button>
+            <button type="button" className="idea-stack-btn" style={{ flex: 1, fontSize: 11, padding: "6px 10px", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}
+              onClick={(e) => archiveIdea(e, m.b, bWin, sb, totalB)}>
+              📦 {bWin && "🏆 "}B 아카이브 저장
+            </button>
           </div>
         </div>
       )}
@@ -1714,7 +1741,7 @@ function IdeaStackPopover({ onSelect, onClose, personas, globalKey, utilProvider
     const filename = file.name || "파일";
 
     if (isImageFile(file)) {
-      if (!persona?.apiKey) { alert("이미지 분석을 위해 API 키를 설정해 주세요."); return; }
+      if (!persona?.apiKey) { showAppToast("🔑 이미지 분석을 위해 API 키가 필요합니다. ⚙️ 설정에서 API 키를 입력해 주세요.", "error", 5000); return; }
       setUploading(`🖼️ ${filename} 분석 중...`);
       try {
         const result = await processImageWithVision(file, persona);
@@ -1736,6 +1763,7 @@ function IdeaStackPopover({ onSelect, onClose, personas, globalKey, utilProvider
         const summary = await callAI(persona, [{ role: "user", content: `아래는 업로드된 ${ext?.toUpperCase()} 문서의 텍스트입니다. 이 내용에서 핵심 비즈니스 아이디어, 컨셉, 기획 요소를 추출하여 한국어로 간결하게 정리해 주세요. 아이디어 입력에 바로 사용할 수 있는 형태로.\n\n---\n${rawText.slice(0, 8000)}` }]);
         onSelect(summary);
       } else {
+        showAppToast("🔑 API 키가 없어 AI 요약 없이 원문 텍스트로 가져옵니다. ⚙️ 설정에서 API 키를 입력하면 AI 요약이 가능합니다.", "warn", 5000);
         onSelect(rawText.slice(0, 2000));
       }
     } catch (err) {
@@ -1769,7 +1797,7 @@ function IdeaStackPopover({ onSelect, onClose, personas, globalKey, utilProvider
     const url = videoUrl.trim();
     if (!url) return;
     const persona = getPersona();
-    if (!persona?.apiKey) { alert("영상 분석을 위해 설정(⚙️) → 유틸리티 API 키를 설정해 주세요."); return; }
+    if (!persona?.apiKey) { showAppToast("🔑 영상 분석을 위해 API 키가 필요합니다. ⚙️ 설정 → 유틸리티 API 키를 입력해 주세요.", "error", 5000); return; }
     setVideoLoading(true);
     setVideoStatus("🎬 영상 메타데이터 수집 중...");
     try {
@@ -1806,7 +1834,7 @@ function IdeaStackPopover({ onSelect, onClose, personas, globalKey, utilProvider
     const url = webUrl.trim();
     if (!url) return;
     const persona = getPersona();
-    if (!persona?.apiKey) { alert("웹 분석을 위해 API 키를 설정해 주세요."); return; }
+    if (!persona?.apiKey) { showAppToast("🔑 웹 분석을 위해 API 키가 필요합니다. ⚙️ 설정에서 API 키를 입력해 주세요.", "error", 5000); return; }
     setWebLoading(true);
     setWebStatus("🌐 웹 페이지 수집 중...");
     try {
@@ -1919,7 +1947,7 @@ function IdeaStackPopover({ onSelect, onClose, personas, globalKey, utilProvider
   );
 }
 
-function Tournament({ personas, globalKey, utilProvider, utilModel, utilApiKey }) {
+function Tournament({ personas, globalKey, utilProvider, utilModel, utilApiKey, onOpenSettings }) {
   const recordHistory = useRecordHistory();
   const { notifyStart, notifyDone } = useTaskNotify("tournament");
   const { spend } = useCredits();
@@ -1945,6 +1973,7 @@ function Tournament({ personas, globalKey, utilProvider, utilModel, utilApiKey }
   const [conceptCount, setConceptCount] = useState(8);
   const [ideaContext, setIdeaContext] = useState("");
   const [ctxOpen, setCtxOpen] = useState(false);
+  const [keyHint, setKeyHint] = useState("");
   const target = useTarget();
   const ui = (i, v) => { const c = [...ideas]; c[i] = v; setIdeas(c); };
   const adj = (n) => { const nc = Math.max(2, Math.min(32, n)); setSc(nc); const ni = [...ideas]; while (ni.length < nc) ni.push(""); setIdeas(ni.slice(0, nc)); };
@@ -1957,6 +1986,11 @@ function Tournament({ personas, globalKey, utilProvider, utilModel, utilApiKey }
     if (mode !== "concept") { const ns = addToIdeaStack(uids); setStackCount(ns.length); }
     const mainPersona = pickUsablePersona(personas, globalKey);
     LOG.info(`Tournament start mode=${mode} ideas=${uids.length} persona=${mainPersona.provider}/${mainPersona.model} hasKey=${!!mainPersona.apiKey}`);
+    if (!mainPersona?.apiKey) {
+      setKeyHint(`AI 심판을 위해 API 키가 필요합니다. 설정에서 ${mainPersona?.provider === "openai" ? "OpenAI" : mainPersona?.provider === "gemini" ? "Gemini" : "Claude"} API 키를 입력해 주세요.`);
+      return;
+    }
+    setKeyHint("");
     if (!spend("tournament")) return; notifyStart(); addToFeedbackStack(fb); setRunning(true);
     let aiFill = [];
     let all = [...uids];
@@ -2162,6 +2196,12 @@ function Tournament({ personas, globalKey, utilProvider, utilModel, utilApiKey }
                 ))}
               </div>
               <div style={{ position: "sticky", bottom: 0, paddingTop: 12, paddingBottom: 8, background: "linear-gradient(0deg, var(--bg-surface-1) 60%, transparent)", zIndex: 5 }}>
+                {keyHint && (
+                  <div className="err-msg" style={{ marginBottom: 10 }}>
+                    🔑 {keyHint}
+                    {onOpenSettings && <button type="button" className="btn-cta" style={{ marginTop: 8, width: "100%", fontSize: 13 }} onClick={() => { setKeyHint(""); onOpenSettings(); }}>⚙️ 설정 열기</button>}
+                  </div>
+                )}
                 <button type="button" className="btn-cta" onClick={go} disabled={!ctx.trim()} style={{ background: "linear-gradient(135deg, #6366f1, #2563eb)", opacity: ctx.trim() ? 1 : 0.5 }}>
                   ⚡ AI 자동 생성 & 토너먼트 시작 ({conceptCount}개)<CreditCostTag costKey="tournament" />
                 </button>
@@ -2223,6 +2263,12 @@ function Tournament({ personas, globalKey, utilProvider, utilModel, utilApiKey }
                 ))}
               </div>
               <div style={{ position: "sticky", bottom: 0, paddingTop: 12, paddingBottom: 8, background: "linear-gradient(0deg, var(--bg-surface-1) 60%, transparent)", zIndex: 5 }}>
+                {keyHint && (
+                  <div className="err-msg" style={{ marginBottom: 10 }}>
+                    🔑 {keyHint}
+                    {onOpenSettings && <button type="button" className="btn-cta" style={{ marginTop: 8, width: "100%", fontSize: 13 }} onClick={() => { setKeyHint(""); onOpenSettings(); }}>⚙️ 설정 열기</button>}
+                  </div>
+                )}
                 <button type="button" className="btn-cta" onClick={go} disabled={uids.length < 2} style={{ opacity: uids.length < 2 ? 0.5 : 1, pointerEvents: uids.length < 2 ? "none" : "auto" }}>
                   🏆 토너먼트 시작 ({uids.length}개{mode === "full32" ? " → 32강" : mode === "mine" && uids.length % 2 === 1 ? " · 부전승 포함" : ""})<CreditCostTag costKey="tournament" />
                 </button>
@@ -3917,7 +3963,7 @@ function WebAppPrototyper({ item, personas, globalKey, onClose }) {
   const generatePrompt = () => {
     if (!selectedSkin) return;
     const persona = getPersona();
-    if (!persona) { alert("API 키가 필요합니다"); return; }
+    if (!persona?.apiKey) { showAppToast("🔑 프로토타이퍼 생성을 위해 API 키가 필요합니다. ⚙️ 설정에서 API 키를 입력해 주세요.", "error", 5000); return; }
     setGenerating(true);
     setPhase("generating");
     notifyStart();
@@ -6158,7 +6204,7 @@ export default function App() {
                   )}
                   {visitedModes.has("tournament") && (
                     <div style={{ display: activeMode === "tournament" ? "block" : "none" }}>
-                      <Tournament personas={personas} globalKey={globalKey} utilProvider={utilProvider} utilModel={utilModel} utilApiKey={utilApiKey} />
+                      <Tournament personas={personas} globalKey={globalKey} utilProvider={utilProvider} utilModel={utilModel} utilApiKey={utilApiKey} onOpenSettings={() => setShowSettings(true)} />
                     </div>
                   )}
                   {visitedModes.has("devil") && (

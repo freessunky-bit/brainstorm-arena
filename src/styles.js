@@ -2337,8 +2337,11 @@ export const STYLES = `
 
   /* ── Background Task Guide ── */
   .bg-task-guide {
-    display: flex; align-items: flex-start; gap: 10px;
-    margin: 12px 0 4px; padding: 14px 16px;
+    display: grid;
+    grid-template-columns: 40px 1fr;
+    align-items: center;
+    gap: 0;
+    margin: 12px 0 4px; padding: 13px 16px;
     background: linear-gradient(135deg, rgba(99,102,241,0.06) 0%, rgba(168,85,247,0.04) 100%);
     border: 1px solid rgba(99,102,241,0.12);
     border-radius: 14px;
@@ -2348,15 +2351,31 @@ export const STYLES = `
     from { opacity: 0; transform: translateY(8px); }
     to { opacity: 1; transform: translateY(0); }
   }
+  .bg-task-guide-icon-wrap {
+    display: flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px; border-radius: 10px;
+    background: rgba(99,102,241,0.1);
+    flex-shrink: 0;
+  }
   .bg-task-guide-icon {
-    font-size: 18px; flex-shrink: 0; margin-top: 1px;
+    font-size: 16px; line-height: 1; display: block;
   }
   .bg-task-guide-title {
     font-size: 13px; font-weight: 700; color: var(--text-primary);
-    letter-spacing: -0.02em; margin-bottom: 3px;
+    letter-spacing: -0.02em; margin-bottom: 2px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .bg-task-pulse {
+    display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    background: #6366f1; flex-shrink: 0;
+    animation: bgPulse 1.6s ease-in-out infinite;
+  }
+  @keyframes bgPulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.75); }
   }
   .bg-task-guide-desc {
-    font-size: 12px; color: var(--text-muted); line-height: 1.55;
+    font-size: 11.5px; color: var(--text-muted); line-height: 1.5;
     letter-spacing: -0.01em;
   }
 
