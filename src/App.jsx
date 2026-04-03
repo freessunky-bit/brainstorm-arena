@@ -56,6 +56,9 @@ import {
 } from "./prompts.js";
 import { STYLES } from "./styles.js";
 
+// ─── 앱 업데이트 시점 (코드 수정 시 반드시 갱신) ───
+const LAST_UPDATED = "2026-04-03 15:20";
+
 const MODE_TAGLINES = {
   tournament: [
     "Y Combinator(실리콘밸리 최고 액셀러레이터, Airbnb·Stripe 배출) 배치 선발에서 활용하는 아이디어 검증 토너먼트 방식",
@@ -1245,7 +1248,10 @@ function SettingsModal({ personas, setPersonas, onClose, globalKey, setGlobalKey
             앱 초기화 (테스트)
           </button>
         </div>
-        <div style={{ display: "flex", gap: 8, marginTop: 20 }}>
+        <div style={{ marginTop: 20, paddingTop: 14, borderTop: "1px solid var(--glass-border)", textAlign: "center" }}>
+          <span style={{ fontSize: 11, color: "var(--text-muted)" }}>최종 업데이트 {LAST_UPDATED}</span>
+        </div>
+        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
           <button className="btn-ghost" style={{ flex: 1 }} onClick={onClose}>취소</button>
           <button className="btn-cta" style={{ flex: 2 }} onClick={save}>설정 저장</button>
         </div>
