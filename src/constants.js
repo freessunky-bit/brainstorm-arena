@@ -12,6 +12,44 @@ export const PROVIDERS = {
   gemini: { name: "Gemini", color: "#059669", models: ["gemini-2.5-flash", "gemini-2.0-flash"] },
 };
 
+export function getProviderName(provider) {
+  return PROVIDERS[provider]?.name || (provider ? String(provider) : "AI");
+}
+
+export function normalizeProvider(provider, fallback = "claude") {
+  return provider && PROVIDERS[provider] ? provider : fallback;
+}
+
+export function normalizeProviderModel(provider, model, fallbackProvider = "claude") {
+  const prov = normalizeProvider(provider, fallbackProvider);
+  const models = PROVIDERS[prov]?.models || [];
+  const resolvedModel = typeof model === "string" && models.includes(model)
+    ? model
+    : (models[0] || "");
+  return { provider: prov, model: resolvedModel };
+}
+
+export function safeJsonClone(value, fallback = null) {
+  try {
+    if (typeof structuredClone === "function") return structuredClone(value);
+  } catch {}
+  try {
+    const seen = new WeakSet();
+    return JSON.parse(JSON.stringify(value, (_key, current) => {
+      if (typeof current === "bigint") return current.toString();
+      if (typeof current === "function" || typeof current === "symbol" || typeof current === "undefined") return undefined;
+      if (current instanceof Error) return { name: current.name, message: current.message, stack: current.stack };
+      if (typeof current === "object" && current !== null) {
+        if (seen.has(current)) return "[Circular]";
+        seen.add(current);
+      }
+      return current;
+    }));
+  } catch {
+    return fallback;
+  }
+}
+
 // ─── Default Personas ───
 export const DEFAULT_PERSONAS = [
   { id: "market", name: "시장 분석가", icon: "📊", role: `You are a McKinsey-level market strategist with 20+ years advising Fortune 500 and Y Combinator portfolio companies. Your analysis framework:
@@ -83,10 +121,13 @@ export function mergePersonasWithDefaults(stored) {
   return DEFAULT_PERSONAS.map((def) => {
     const cur = byId.get(def.id);
     if (!cur) return { ...def };
-    const prov = cur.provider && PROVIDERS[cur.provider] ? cur.provider : def.provider;
-    const models = PROVIDERS[prov]?.models || [];
-    const model = models.includes(cur.model) ? cur.model : (models[0] || def.model);
-    return { ...def, provider: prov, model, apiKey: typeof cur.apiKey === "string" ? cur.apiKey : "" };
+    const normalized = normalizeProviderModel(cur.provider || def.provider, cur.model || def.model, def.provider);
+    return {
+      ...def,
+      provider: normalized.provider,
+      model: normalized.model,
+      apiKey: typeof cur.apiKey === "string" ? cur.apiKey : "",
+    };
   });
 }
 
@@ -99,31 +140,54 @@ export function loadPersonasFromStorage() {
 }
 
 export function loadSettings() {
+  const fallback = {
+    globalKey: "",
+    totProvider: "claude",
+    totModel: PROVIDERS.claude.models[0],
+    totApiKey: "",
+    mixProvider: "claude",
+    mixModel: PROVIDERS.claude.models[0],
+    mixApiKey: "",
+    utilProvider: "openai",
+    utilModel: PROVIDERS.openai.models[0],
+    utilApiKey: "",
+  };
   try {
     const r = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY) || "{}");
+    const tot = normalizeProviderModel(r.totProvider, r.totModel, "claude");
+    const mix = normalizeProviderModel(r.mixProvider, r.mixModel, "claude");
+    const util = normalizeProviderModel(r.utilProvider, r.utilModel, "openai");
     return {
       globalKey: typeof r.globalKey === "string" ? r.globalKey : "",
-      totProvider: r.totProvider && PROVIDERS[r.totProvider] ? r.totProvider : "claude",
-      totModel: typeof r.totModel === "string" ? r.totModel : PROVIDERS.claude.models[0],
+      totProvider: tot.provider,
+      totModel: tot.model,
       totApiKey: typeof r.totApiKey === "string" ? r.totApiKey : "",
-      mixProvider: r.mixProvider && PROVIDERS[r.mixProvider] ? r.mixProvider : "claude",
-      mixModel: typeof r.mixModel === "string" ? r.mixModel : PROVIDERS.claude.models[0],
+      mixProvider: mix.provider,
+      mixModel: mix.model,
       mixApiKey: typeof r.mixApiKey === "string" ? r.mixApiKey : "",
-      utilProvider: r.utilProvider && PROVIDERS[r.utilProvider] ? r.utilProvider : "openai",
-      utilModel: typeof r.utilModel === "string" ? r.utilModel : PROVIDERS.openai.models[0],
+      utilProvider: util.provider,
+      utilModel: util.model,
       utilApiKey: typeof r.utilApiKey === "string" ? r.utilApiKey : "",
     };
   } catch {
-    return { globalKey: "", totProvider: "claude", totModel: PROVIDERS.claude.models[0], totApiKey: "", mixProvider: "claude", mixModel: PROVIDERS.claude.models[0], mixApiKey: "", utilProvider: "openai", utilModel: PROVIDERS.openai.models[0], utilApiKey: "" };
+    return fallback;
   }
 }
 
 /** Claude는 글로벌 키 폴백, OpenAI/Gemini는 개별 키만 */
 export function withResolvedApiKey(persona, globalKey) {
-  const own = (persona.apiKey || "").trim();
-  const g = (globalKey || "").trim();
-  const apiKey = own || (persona.provider === "claude" ? g : "");
-  return { ...persona, apiKey };
+  const normalized = normalizeProviderModel(persona?.provider, persona?.model, "claude");
+  const own = typeof persona?.apiKey === "string" ? persona.apiKey.trim() : "";
+  const g = typeof globalKey === "string" ? globalKey.trim() : "";
+  const apiKey = own || (normalized.provider === "claude" ? g : "");
+  return {
+    ...persona,
+    provider: normalized.provider,
+    model: normalized.model,
+    apiKey,
+    hasKey: !!apiKey,
+    provName: getProviderName(normalized.provider),
+  };
 }
 
 export function pickUsablePersona(personas, globalKey) {
@@ -317,22 +381,56 @@ export function fisherYatesShuffle(arr) {
 }
 
 // ─── localStorage Helpers ───
+function loadJson(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw);
+    return parsed ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function saveJson(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+}
+
 export function loadHistory() {
-  try { const raw = localStorage.getItem(HISTORY_STORAGE_KEY); if (!raw) return []; const p = JSON.parse(raw); return Array.isArray(p) ? p : []; } catch { return []; }
+  const parsed = loadJson(HISTORY_STORAGE_KEY, []);
+  return Array.isArray(parsed) ? parsed : [];
 }
 export function persistHistory(entries) {
-  try { localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(entries.slice(0, HISTORY_MAX))); } catch {}
+  saveJson(HISTORY_STORAGE_KEY, Array.isArray(entries) ? entries.slice(0, HISTORY_MAX) : []);
 }
-export function loadArchive() { try { return JSON.parse(localStorage.getItem(ARCHIVE_KEY) || "[]"); } catch { return []; } }
-export function saveArchive(items) { try { localStorage.setItem(ARCHIVE_KEY, JSON.stringify(items)); } catch {} }
-export function loadArchiveGroups() { try { return JSON.parse(localStorage.getItem(ARCHIVE_GROUPS_KEY) || '["기본"]'); } catch { return ["기본"]; } }
-export function saveArchiveGroups(g) { try { localStorage.setItem(ARCHIVE_GROUPS_KEY, JSON.stringify(g)); } catch {} }
-export function loadCredits() { try { const v = localStorage.getItem(CREDIT_STORAGE_KEY); return v !== null ? Number(v) : CREDIT_DEFAULT; } catch { return CREDIT_DEFAULT; } }
-export function saveCredits(n) { try { localStorage.setItem(CREDIT_STORAGE_KEY, String(n)); } catch {} }
+export function loadArchive() {
+  const parsed = loadJson(ARCHIVE_KEY, []);
+  return Array.isArray(parsed) ? parsed : [];
+}
+export function saveArchive(items) { saveJson(ARCHIVE_KEY, Array.isArray(items) ? items : []); }
+export function loadArchiveGroups() {
+  const parsed = loadJson(ARCHIVE_GROUPS_KEY, ["기본"]);
+  return Array.isArray(parsed) && parsed.length ? parsed : ["기본"];
+}
+export function saveArchiveGroups(g) { saveJson(ARCHIVE_GROUPS_KEY, Array.isArray(g) ? g : ["기본"]); }
+export function loadCredits() {
+  try {
+    const raw = localStorage.getItem(CREDIT_STORAGE_KEY);
+    if (raw === null) return CREDIT_DEFAULT;
+    const num = Number(raw);
+    return Number.isFinite(num) && num >= 0 ? num : CREDIT_DEFAULT;
+  } catch {
+    return CREDIT_DEFAULT;
+  }
+}
+export function saveCredits(n) { try { localStorage.setItem(CREDIT_STORAGE_KEY, String(Math.max(0, Number(n) || 0))); } catch {} }
 
 // Idea / Context / Feedback Stack Helpers
-export function loadIdeaStack() { try { return JSON.parse(localStorage.getItem(IDEA_STACK_KEY) || "[]").slice(0, IDEA_STACK_MAX); } catch { return []; } }
-export function saveIdeaStack(stack) { localStorage.setItem(IDEA_STACK_KEY, JSON.stringify(stack.slice(0, IDEA_STACK_MAX))); }
+export function loadIdeaStack() {
+  const parsed = loadJson(IDEA_STACK_KEY, []);
+  return Array.isArray(parsed) ? parsed.slice(0, IDEA_STACK_MAX) : [];
+}
+export function saveIdeaStack(stack) { saveJson(IDEA_STACK_KEY, Array.isArray(stack) ? stack.slice(0, IDEA_STACK_MAX) : []); }
 export function addToIdeaStack(texts) {
   const stack = loadIdeaStack();
   const existing = new Set(stack.map(s => s.trim().toLowerCase()));
@@ -351,8 +449,11 @@ export function removeFromIdeaStack(text) {
   saveIdeaStack(stack);
   return stack;
 }
-export function loadContextStack() { try { return JSON.parse(localStorage.getItem(CONTEXT_STACK_KEY) || "[]").slice(0, CONTEXT_STACK_MAX); } catch { return []; } }
-export function saveContextStack(s) { localStorage.setItem(CONTEXT_STACK_KEY, JSON.stringify(s.slice(0, CONTEXT_STACK_MAX))); }
+export function loadContextStack() {
+  const parsed = loadJson(CONTEXT_STACK_KEY, []);
+  return Array.isArray(parsed) ? parsed.slice(0, CONTEXT_STACK_MAX) : [];
+}
+export function saveContextStack(s) { saveJson(CONTEXT_STACK_KEY, Array.isArray(s) ? s.slice(0, CONTEXT_STACK_MAX) : []); }
 export function addToContextStack(text) {
   const t = String(text || "").trim();
   if (!t) return;
@@ -365,8 +466,11 @@ export function removeFromContextStack(text) {
   saveContextStack(stack);
   return stack;
 }
-export function loadFeedbackStack() { try { return JSON.parse(localStorage.getItem(FEEDBACK_STACK_KEY) || "[]").slice(0, FEEDBACK_STACK_MAX); } catch { return []; } }
-export function saveFeedbackStack(s) { localStorage.setItem(FEEDBACK_STACK_KEY, JSON.stringify(s.slice(0, FEEDBACK_STACK_MAX))); }
+export function loadFeedbackStack() {
+  const parsed = loadJson(FEEDBACK_STACK_KEY, []);
+  return Array.isArray(parsed) ? parsed.slice(0, FEEDBACK_STACK_MAX) : [];
+}
+export function saveFeedbackStack(s) { saveJson(FEEDBACK_STACK_KEY, Array.isArray(s) ? s.slice(0, FEEDBACK_STACK_MAX) : []); }
 export function addToFeedbackStack(text) {
   const t = String(text || "").trim();
   if (!t) return;
@@ -382,35 +486,45 @@ export function removeFromFeedbackStack(text) {
 
 export function clearBrainstormAppDataForTesting() {
   const keys = [PERSONAS_STORAGE_KEY, SETTINGS_STORAGE_KEY, HISTORY_STORAGE_KEY, ARCHIVE_KEY, ARCHIVE_GROUPS_KEY, CREDIT_STORAGE_KEY, IDEA_STACK_KEY, CONTEXT_STACK_KEY, FEEDBACK_STACK_KEY, "brainstorm-arena-personas-v2", "brainstorm-arena-personas", "brainstorm-arena-history"];
-  keys.forEach(k => { try { localStorage.removeItem(k); } catch {} });
+  const onboardingKeys = [];
   for (let i = 0; i < localStorage.length; i++) {
     const k = localStorage.key(i);
-    if (k && k.startsWith(ONBOARDING_KEY)) { try { localStorage.removeItem(k); } catch {} }
+    if (k && k.startsWith(ONBOARDING_KEY)) onboardingKeys.push(k);
   }
-  location.reload();
+  [...keys, ...onboardingKeys].forEach((k) => { try { localStorage.removeItem(k); } catch {} });
+  if (typeof location !== "undefined" && typeof location.reload === "function") location.reload();
 }
 
 // Resolve persona for ToT / Util / Mix
+function buildSpecialPersona({ id, name, icon, provider, model, apiKey, globalKey, fallbackProvider }) {
+  const normalized = normalizeProviderModel(provider, model, fallbackProvider);
+  let key = typeof apiKey === "string" ? apiKey.trim() : "";
+  if (!key && normalized.provider === "claude") key = typeof globalKey === "string" ? globalKey.trim() : "";
+  return {
+    id,
+    name,
+    icon,
+    role: "",
+    provider: normalized.provider,
+    model: normalized.model,
+    apiKey: key,
+    hasKey: !!key,
+    provName: getProviderName(normalized.provider),
+  };
+}
+
 export function resolveTotPersona(globalKey, totProvider, totModel, totApiKey) {
-  const prov = totProvider || "claude";
-  const mod = totModel || PROVIDERS[prov]?.models[0] || "";
-  const key = (totApiKey || "").trim() || (prov === "claude" ? (globalKey || "") : "");
-  return { id: "__tot", name: "ToT", icon: "🌳", role: "", provider: prov, model: mod, apiKey: key };
+  return buildSpecialPersona({ id: "__tot", name: "ToT", icon: "🌳", provider: totProvider, model: totModel, apiKey: totApiKey, globalKey, fallbackProvider: "claude" });
 }
 export function resolveUtilPersona(globalKey, utilProvider, utilModel, utilApiKey, personas) {
-  const prov = utilProvider || "openai";
-  const mod = utilModel || PROVIDERS[prov]?.models[0] || "";
-  let key = (utilApiKey || "").trim();
-  if (!key && prov === "claude") key = (globalKey || "").trim();
-  if (!key) {
-    const match = (personas || []).find(p => p.provider === prov && (p.apiKey || "").trim());
-    if (match) key = match.apiKey;
-  }
-  return { id: "__util", name: "Util", icon: "🔧", role: "", provider: prov, model: mod, apiKey: key };
+  const base = buildSpecialPersona({ id: "__util", name: "Util", icon: "🔧", provider: utilProvider || "openai", model: utilModel, apiKey: utilApiKey, globalKey, fallbackProvider: "openai" });
+  if (base.hasKey) return base;
+  const resolvedMatch = (personas || [])
+    .map((p) => withResolvedApiKey(p, globalKey))
+    .find((p) => p.provider === base.provider && p.apiKey);
+  if (!resolvedMatch) return base;
+  return { ...base, apiKey: resolvedMatch.apiKey, hasKey: true };
 }
 export function resolveMixPersona(globalKey, mixProvider, mixModel, mixApiKey) {
-  const prov = mixProvider || "claude";
-  const mod = mixModel || PROVIDERS[prov]?.models[0] || "";
-  const key = (mixApiKey || "").trim() || (prov === "claude" ? (globalKey || "") : "");
-  return { id: "__mix", name: "Mix", icon: "🎰", role: "", provider: prov, model: mod, apiKey: key };
+  return buildSpecialPersona({ id: "__mix", name: "Mix", icon: "🎰", provider: mixProvider, model: mixModel, apiKey: mixApiKey, globalKey, fallbackProvider: "claude" });
 }

@@ -4,6 +4,48 @@
 
 ---
 
+## 2026-04-03 #25 — 안정성 리팩토링 · API 방어 강화 · 특수 모드 설정 정합성 보강
+
+### 변경
+
+#### ① 특수 페르소나 설정 정합성 보강
+- `resolveTotPersona`, `resolveUtilPersona`, `resolveMixPersona` 반환값에 `hasKey`, `provName` 추가
+- 저장된 provider/model 조합이 현재 스택과 맞지 않을 경우 자동 정규화
+- `loadSettings()`에서 ToT·Mix·Util 설정을 provider별 유효 모델로 보정
+
+#### ② API 호출/예외 처리 공통화
+- `callAI()`의 공급자별 응답 파싱과 오류 메시지 구조 정리
+- 타임아웃·네트워크 오류·빈 응답·비 JSON 응답 처리 강화
+- `safeParseJsonText()` 추가로 모드별 JSON 파싱 방어 로직 공통화
+- `fetchViaProxy` export로 웹 URL 분석 기능의 런타임 오류 제거
+- `processImageWithVision()`을 공통 fetch/parse 정책에 맞춰 정리
+
+#### ③ 상태 관리 및 비동기 방어 강화
+- `ReportChat` 크레딧 부족 시 loading 상태가 고정되던 문제 수정
+- `HyperNicheExplorer` 실패 응답 history 기록 누락/stale 상태 문제 수정
+- `ModeTaglineRoller`, `QuoteRoller`, `useBackgroundTasks` timeout cleanup 보강
+- IP 국가 감지 effect에서 unmount 이후 state update 가능성 방어
+
+#### ④ 로그/스토리지 안정성 강화
+- `logger.js`에 순환 참조·Error 객체 안전 직렬화 추가
+- `loadCredits()`의 NaN/음수 방어 및 저장 헬퍼 예외 처리 강화
+- history/archive/stack 계열 localStorage helper를 안전 로드/저장 구조로 정리
+- 테스트용 전체 데이터 삭제 루틴에서 onboarding key 정리 안정화
+
+#### ⑤ 유지보수성 개선
+- `App.jsx` 반복 JSON 파싱을 공통 유틸 기반으로 정리
+- 안전하지 않은 깊은 복사 패턴을 `safeJsonClone()`으로 대체
+- 시장 검증 1차 웹검색이 `investor` 페르소나 키를 우선 사용하도록 수정
+- `LAST_UPDATED` 갱신
+
+### 파일 변경
+- `src/constants.js` — 설정 정규화, 특수 persona resolver 보강, storage/helper 안정화
+- `src/api.js` — 공통 JSON 파서, `callAI` 예외 처리 정리, `fetchViaProxy` export, vision/toast 안정화
+- `src/logger.js` — 안전 직렬화 로거
+- `src/App.jsx` — 런타임 오류 수정, 비동기 cleanup, history/loading/state 흐름 개선
+
+---
+
 ## 2026-04-03 #24 — 프로토타이퍼 뷰포트 수정 · 백그라운드 근본 재설계 · 진행 상태 UI
 
 ### 변경

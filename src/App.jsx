@@ -13,7 +13,7 @@ import {
   CREDIT_DEFAULT, CREDIT_COSTS, CREDIT_PACKAGES, CREDIT_STORAGE_KEY, MIX_ITEM_H,
   ANTHROPIC_MESSAGES_URL,
   mergePersonasWithDefaults, loadPersonasFromStorage, loadSettings,
-  withResolvedApiKey, pickUsablePersona, formatOptionalDirectionFb,
+  withResolvedApiKey, pickUsablePersona, formatOptionalDirectionFb, safeJsonClone,
   clipTitle, formatHistoryTime, formatIdeaContext, formatTargetForPrompt,
   fisherYatesShuffle,
   loadHistory, persistHistory,
@@ -31,7 +31,7 @@ import {
 import {
   callAI, showAppToast, useAppToasts,
   parseDocumentFile, fileToBase64, processImageWithVision,
-  extractYouTubeVideoId, extractYouTubeVideoInfo,
+  extractYouTubeVideoId, extractYouTubeVideoInfo, fetchViaProxy, safeParseJsonText,
   generateReportSection,
   parseIdeasLinesFromText, safeParseIdeasJson, generateTournamentSlotIdeas,
 } from "./api.js";
@@ -57,7 +57,7 @@ import {
 import { STYLES } from "./styles.js";
 
 // ─── 앱 업데이트 시점 (코드 수정 시 반드시 갱신) ───
-const LAST_UPDATED = "2026-04-03 21:00";
+const LAST_UPDATED = "2026-04-03 20:33";
 
 const MODE_TAGLINES = {
   tournament: [
@@ -180,14 +180,24 @@ function ObHint({ menuId, onDismiss }) {
 function ModeTaglineRoller({ lines }) {
   const [idx, setIdx] = useState(0);
   const [fade, setFade] = useState(true);
+  const fadeTimeoutRef = useRef(null);
+
   useEffect(() => {
-    if (lines.length <= 1) return;
+    if (lines.length <= 1) return undefined;
     const iv = setInterval(() => {
       setFade(false);
-      setTimeout(() => { setIdx(i => (i + 1) % lines.length); setFade(true); }, 350);
+      if (fadeTimeoutRef.current) clearTimeout(fadeTimeoutRef.current);
+      fadeTimeoutRef.current = setTimeout(() => {
+        setIdx((i) => (i + 1) % lines.length);
+        setFade(true);
+      }, 350);
     }, 6000);
-    return () => clearInterval(iv);
+    return () => {
+      clearInterval(iv);
+      if (fadeTimeoutRef.current) clearTimeout(fadeTimeoutRef.current);
+    };
   }, [lines.length]);
+
   return (
     <div className="mode-tagline" style={{ opacity: fade ? 1 : 0, transition: "opacity 0.35s ease" }}>
       {lines[idx]}
@@ -195,7 +205,7 @@ function ModeTaglineRoller({ lines }) {
   );
 }
 
-const QUOTES = [
+const QUOTES = [ 
   "\"세상을 바꾸는 건 미친 사람들이다.\" — Steve Jobs",
   "\"실패는 성공의 어머니다.\" — Thomas Edison",
   "\"빠르게 움직이고, 깨뜨려라.\" — Mark Zuckerberg",
@@ -300,20 +310,28 @@ function QuoteRoller() {
   const [idx, setIdx] = useState(() => Math.floor(Math.random() * QUOTES.length));
   const [fade, setFade] = useState(true);
   const [showGuide, setShowGuide] = useState(false);
+  const fadeTimeoutRef = useRef(null);
+
   useEffect(() => {
     const iv = setInterval(() => {
       setFade(false);
-      setTimeout(() => {
+      if (fadeTimeoutRef.current) clearTimeout(fadeTimeoutRef.current);
+      fadeTimeoutRef.current = setTimeout(() => {
         setIdx(Math.floor(Math.random() * QUOTES.length));
         setFade(true);
       }, 400);
     }, 5000);
-    return () => clearInterval(iv);
+    return () => {
+      clearInterval(iv);
+      if (fadeTimeoutRef.current) clearTimeout(fadeTimeoutRef.current);
+    };
   }, []);
+
   useEffect(() => {
     const t = setTimeout(() => setShowGuide(true), 1200);
     return () => clearTimeout(t);
   }, []);
+
   return (
     <div>
       {showGuide && (
@@ -1349,7 +1367,7 @@ function MultiPerspective({ personas, globalKey, utilProvider, utilModel, utilAp
         results: { ...ar },
         synthesis: synthesisText,
         personaLabels: active.map((p) => ({ id: p.id, name: p.name, icon: p.icon, provider: p.provider, model: p.model })),
-        ...(deep && deepArr.length > 0 ? { deepSteps: JSON.parse(JSON.stringify(deepArr)) } : {}),
+        ...(deep && deepArr.length > 0 ? { deepSteps: safeJsonClone(deepArr, []) } : {}),
       },
     });
   };
@@ -2074,7 +2092,7 @@ function Tournament({ personas, globalKey, utilProvider, utilModel, utilApiKey }
           fb,
           seedIdeas: [...uids],
           aiIdeas: aiFill,
-          rounds: JSON.parse(JSON.stringify(ar)),
+          rounds: safeJsonClone(ar, []),
           finalTop: top3.slice(0, 3),
           finalReport,
         },
@@ -2590,7 +2608,8 @@ ${ideas}
 
 {"clusters":[{"name":"한국어 클러스터명","color":"#3182f6","ideas":["한국어"],"keywords":["한국어"]}],"blueOceans":[{"area":"한국어","suggestion":"한국어","reason":"한국어"}],"synergies":[{"ideas":["한국어","한국어"],"combined":"한국어","power":"한국어"}]}`;
       const r = await callAI(p, [{ role: "user", content: dnaUser }], DNA_MAP_SYSTEM);
-      snapshot = JSON.parse(r.replace(/```json|```/g, "").trim());
+      snapshot = safeParseJsonText(r);
+      if (!snapshot) throw new Error("DNA 맵 JSON 파싱 실패");
       setAnalysis(snapshot);
     } catch {
       try {
@@ -2609,7 +2628,7 @@ ${ideas}
     }
     setRunning(false);
     notifyDone(clipTitle(ideas.split("\n").find((l) => l.trim()) || ideas));
-    if (snapshot) recordHistory?.({ modeId: "dna", title: clipTitle(ideas.split("\n").find((l) => l.trim()) || ideas), payload: { ideasText: ideas, fb, analysis: JSON.parse(JSON.stringify(snapshot)) } });
+    if (snapshot) recordHistory?.({ modeId: "dna", title: clipTitle(ideas.split("\n").find((l) => l.trim()) || ideas), payload: { ideasText: ideas, fb, analysis: safeJsonClone(snapshot, null) } });
   };
   return (<div>
     <div className="s-label">아이디어 목록 (한 줄에 하나씩)</div>
@@ -2651,8 +2670,8 @@ function MarketValidation({ personas, globalKey, utilProvider, utilModel, utilAp
     let out = "";
     const marketPrompt = `**투자 심사급 시장 검증 리포트**를 작성하세요.\n\n**아이디어:** ${idea}${formatOptionalDirectionFb(fb)}${formatIdeaContext(ideaContext)}${tInfo}\n\n웹 검색을 최대한 활용하여 아래 구조로 분석하세요:\n\n## 1. 시장 규모 (TAM → SAM → SOM)\n보텀업 산출 방식으로 구체적 수치. 출처 명시. CAGR 포함.\n\n## 2. 경쟁 환경 매핑\n직접 경쟁 3-5개(각 사의 펀딩/매출/사용자 수), 간접 경쟁 3개, 잠재 빅테크 진입 가능성\n\n## 3. 최신 산업 트렌드 (2024-2025)\n이 시장에 영향을 미치는 기술·규제·소비자 행동 변화\n\n## 4. 성공 · 실패 사례 분석\n유사 분야 성공 기업의 핵심 성공 요인 + 실패 기업의 사망 원인\n\n## 5. 차별화 기회\n기존 경쟁사가 놓치고 있는 Unmet Need, 가치 곡선 분석\n\n## 6. Go-to-Market 전략\nBeachhead 시장 선정 → 채널 전략 → CAC 추정 → 확장 경로\n\n## 7. 투자 매력도\n이 시장에 VC가 투자하는 이유/하지 않는 이유. 최근 관련 펀딩 딜.\n\n한국어로.`;
     try {
-      const claudePersona = personas.find((pp) => pp.provider === "claude") || personas.find((pp) => pp.id === "investor") || personas[0];
-      const ak = withResolvedApiKey(claudePersona, globalKey).apiKey;
+      const investorPersona = personas.find((pp) => pp.id === "investor") || personas.find((pp) => pp.provider === "claude") || personas[0];
+      const ak = withResolvedApiKey(investorPersona, globalKey).apiKey;
       if (!ak) throw new Error("Claude 웹검색 불가 → 폴백");
       const res = await fetch(ANTHROPIC_MESSAGES_URL, { method: "POST", headers: { "Content-Type": "application/json", "x-api-key": ak, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
         body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 16000, tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }], messages: [{ role: "user", content: marketPrompt }] }) });
@@ -2837,29 +2856,31 @@ function HyperNicheExplorer({ personas, globalKey, utilProvider, utilModel, util
       if (hn) { const r = withResolvedApiKey(hn, globalKey); if (r.apiKey) return r; }
       return pickUsablePersona(personas, globalKey);
     })();
-    const userMsg = `관심 산업/방향: "${input}"${formatOptionalDirectionFb(fb)}${formatIdeaContext(ideaContext)}${tInfo}\n\n위 지시에 따라 JSON 배열 3개를 반환하세요.`;
+    const userMsg = `관심 산업/방향: "${input}"${formatOptionalDirectionFb(fb)}${formatIdeaContext(ideaContext)}${tInfo}
+
+위 지시에 따라 JSON 배열 3개를 반환하세요.`;
     let parsed = [];
+    let fallbackText = null;
     try {
       const raw = await callAI(p, [{ role: "user", content: userMsg }], HYPERNICHE_SYSTEM);
-      const cleaned = raw.replace(/```json|```/g, "").trim();
-      try { parsed = JSON.parse(cleaned); } catch {
-        const i = cleaned.indexOf("["); const j = cleaned.lastIndexOf("]");
-        if (i >= 0 && j > i) try { parsed = JSON.parse(cleaned.slice(i, j + 1)); } catch {}
-      }
-      if (Array.isArray(parsed) && parsed.length > 0) {
+      const maybeParsed = safeParseJsonText(raw, { allowObject: false, allowArray: true });
+      if (Array.isArray(maybeParsed) && maybeParsed.length > 0) {
+        parsed = maybeParsed;
         setIdeas(parsed);
       } else {
+        fallbackText = raw;
         setRawFallback(raw);
       }
     } catch (err) {
-      setRawFallback(`오류: ${err.message}`);
+      fallbackText = `오류: ${err.message}`;
+      setRawFallback(fallbackText);
     }
     setRunning(false);
     notifyDone(clipTitle(input));
     recordHistory?.({
       modeId: "hyperniche",
       title: clipTitle(input),
-      payload: { input, fb, ideas: parsed.length ? parsed : null, rawFallback: parsed.length ? null : (rawFallback || null) },
+      payload: { input, fb, ideas: parsed.length ? safeJsonClone(parsed, []) : null, rawFallback: parsed.length ? null : fallbackText },
     });
   };
 
@@ -3145,12 +3166,7 @@ function MixupRoulette({ personas, globalKey, mixProvider, mixModel, mixApiKey, 
 
     try {
       const r = await callAI(mix, [{ role: "user", content: prompt }], MIX_WHEEL_SYSTEM);
-      const cleaned = r.replace(/```json|```/g, "").trim();
-      let parsed;
-      try { parsed = JSON.parse(cleaned); } catch {
-        const a = cleaned.indexOf("{"), b = cleaned.lastIndexOf("}");
-        if (a >= 0 && b > a) try { parsed = JSON.parse(cleaned.slice(a, b + 1)); } catch { /* noop */ }
-      }
+      const parsed = safeParseJsonText(r, { allowObject: true, allowArray: false });
       const parts = parsed?.right_wheel_parts;
       if (Array.isArray(parts) && parts.length > 0) {
         const clean = parts.map((s) => String(s).trim()).filter(Boolean);
@@ -3185,12 +3201,7 @@ function MixupRoulette({ personas, globalKey, mixProvider, mixModel, mixApiKey, 
 
     try {
       const r = await callAI(mix, [{ role: "user", content: prompt }], MIX_REPORT_SYSTEM);
-      const cleaned = r.replace(/```json|```/g, "").trim();
-      let parsed;
-      try { parsed = JSON.parse(cleaned); } catch {
-        const a = cleaned.indexOf("{"), b = cleaned.lastIndexOf("}");
-        if (a >= 0 && b > a) try { parsed = JSON.parse(cleaned.slice(a, b + 1)); } catch { /* noop */ }
-      }
+      const parsed = safeParseJsonText(r, { allowObject: true, allowArray: false });
       if (parsed?.combined_concept) {
         setReport(parsed);
         addLinesToIdeaStack(`${selectedLeft} × ${selectedRight}`);
@@ -3461,7 +3472,7 @@ function MixupRoulette({ personas, globalKey, mixProvider, mixModel, mixApiKey, 
                     <div style={{ fontSize: 14, color: "var(--text-secondary)", lineHeight: 1.7 }}>{report.reference}</div>
                   </div>
                 )}
-                <QuantumSimCTA idea={selectedLeft + " × " + selectedRight} context={ideaContext} existingReport={JSON.stringify(report)} personas={personas} globalKey={globalKey} />
+                <QuantumSimCTA idea={selectedLeft + " × " + selectedRight} context="" existingReport={JSON.stringify(report)} personas={personas} globalKey={globalKey} />
                 <ReportTools reportText={JSON.stringify(report)} personas={personas} globalKey={globalKey} />
                 <button
                   className="btn-cta"
@@ -3519,13 +3530,7 @@ function TotDeepDive({ personas, globalKey, totProvider, totModel, totApiKey, on
   const [statusMsg, setStatusMsg] = useState("");
   const [keyHint, setKeyHint] = useState("");
 
-  const tryJson = (s) => {
-    try { return JSON.parse(s); } catch {
-      const i = s.indexOf("{"); const j = s.lastIndexOf("}");
-      if (i >= 0 && j > i) try { return JSON.parse(s.slice(i, j + 1)); } catch {}
-      return null;
-    }
-  };
+  const tryJson = (s) => safeParseJsonText(s, { allowObject: true, allowArray: false });
 
   const run = async () => {
     if (!idea.trim()) return;
@@ -4317,7 +4322,9 @@ function ReportChat({ idea, reportSummary, personas, globalKey }) {
   const { spend } = useCredits();
   const [open, setOpen] = useState(false);
   const [msgs, setMsgs] = useState([
-    { role: "ai", text: `안녕하세요! **"${(idea || "").slice(0, 30)}"** 리포트에 대해 질문하거나 수정을 요청해 보세요.\n\n예: "FBO 관점에서 보강해줘", "리스크를 더 자세히 분석해줘"` },
+    { role: "ai", text: `안녕하세요! **"${(idea || "").slice(0, 30)}"** 리포트에 대해 질문하거나 수정을 요청해 보세요.
+
+예: "FBO 관점에서 보강해줘", "리스크를 더 자세히 분석해줘"` },
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -4329,25 +4336,35 @@ function ReportChat({ idea, reportSummary, personas, globalKey }) {
   const send = async (text) => {
     const q = (text || input).trim();
     if (!q || loading) return;
-    setInput("");
+    if (!spend("report_chat")) return;
+
     const newMsgs = [...msgs, { role: "user", text: q }];
+    setInput("");
     setMsgs(newMsgs);
     setLoading(true);
-    if (!spend("report_chat")) return;
+
     try {
       const persona = pickUsablePersona(personas, globalKey);
       if (!persona?.apiKey) throw new Error("API 키를 설정해 주세요 (⚙️ 설정).");
       const contextMsg = reportSummary
-        ? `[현재 리포트 요약]\n${reportSummary.slice(0, 3000)}\n\n[아이디어]: ${idea}\n\n[사용자 질문]: ${q}`
-        : `[아이디어]: ${idea}\n\n[사용자 질문]: ${q}`;
-      const history = newMsgs.slice(-6).map(m => ({ role: m.role === "ai" ? "assistant" : "user", content: m.text }));
+        ? `[현재 리포트 요약]
+${reportSummary.slice(0, 3000)}
+
+[아이디어]: ${idea}
+
+[사용자 질문]: ${q}`
+        : `[아이디어]: ${idea}
+
+[사용자 질문]: ${q}`;
+      const history = newMsgs.slice(-6).map((m) => ({ role: m.role === "ai" ? "assistant" : "user", content: m.text }));
       history[history.length - 1].content = contextMsg;
       const result = await callAI(persona, history, REPORT_CHAT_SYSTEM);
-      setMsgs(prev => [...prev, { role: "ai", text: result }]);
+      setMsgs((prev) => [...prev, { role: "ai", text: result }]);
     } catch (err) {
-      setMsgs(prev => [...prev, { role: "ai", text: `⚠️ 오류: ${err.message}` }]);
+      setMsgs((prev) => [...prev, { role: "ai", text: `⚠️ 오류: ${err.message}` }]);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const handleKeyDown = (e) => {
@@ -4358,7 +4375,7 @@ function ReportChat({ idea, reportSummary, personas, globalKey }) {
     <>
       <button
         className="report-chat-fab"
-        onClick={() => setOpen(o => !o)}
+        onClick={() => setOpen((o) => !o)}
         title="AI와 리포트 대화"
         aria-label="AI 채팅"
       >
@@ -5720,6 +5737,11 @@ function ReportTools({ reportText, personas, globalKey }) {
 function useBackgroundTasks() {
   const [tasks, setTasks] = useState({});
   const [toast, setToast] = useState(null);
+  const toastTimerRef = useRef(null);
+
+  useEffect(() => () => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+  }, []);
 
   const startTask = useCallback((modeId) => {
     setTasks((prev) => ({ ...prev, [modeId]: "running" }));
@@ -5730,7 +5752,11 @@ function useBackgroundTasks() {
     setTasks((prev) => ({ ...prev, [modeId]: "done" }));
     const mode = MODES.find((m) => m.id === modeId) || EXTRA_MODE_LABELS[modeId];
     setToast({ modeId, text: `${mode?.icon || "✓"} ${mode?.name || modeId} 완료 — ${title || "결과 확인하기"}` });
-    setTimeout(() => setToast(null), 6000);
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => {
+      setToast(null);
+      toastTimerRef.current = null;
+    }, 6000);
   }, []);
 
   const clearTask = useCallback((modeId) => {
@@ -5740,7 +5766,7 @@ function useBackgroundTasks() {
   return { tasks, toast, startTask, completeTask, clearTask, setToast };
 }
 
-const MODE_CATEGORIES = [
+const MODE_CATEGORIES = [ 
   { key: "all", label: "전체" },
   { key: "ideation", label: "아이디어 도출" },
   { key: "validation", label: "검증" },
@@ -5887,6 +5913,7 @@ export default function App() {
   const [localGeoReady, setLocalGeoReady] = useState(false);
   useEffect(() => {
     let done = false;
+    const controllers = new Set();
     const set = (name, code) => {
       if (done) return;
       done = true;
@@ -5900,8 +5927,12 @@ export default function App() {
     };
     const safeFetch = (url) => {
       const ctrl = new AbortController();
+      controllers.add(ctrl);
       const tid = setTimeout(() => ctrl.abort(), 5000);
-      return fetch(url, { signal: ctrl.signal }).finally(() => clearTimeout(tid));
+      return fetch(url, { signal: ctrl.signal }).finally(() => {
+        clearTimeout(tid);
+        controllers.delete(ctrl);
+      });
     };
     (async () => {
       try {
@@ -5923,7 +5954,12 @@ export default function App() {
       setKoreaDefault();
     })().catch(() => setKoreaDefault());
     const guard = setTimeout(setKoreaDefault, 10000);
-    return () => clearTimeout(guard);
+    return () => {
+      done = true;
+      clearTimeout(guard);
+      controllers.forEach((ctrl) => ctrl.abort());
+      controllers.clear();
+    };
   }, []);
   useEffect(() => {
     try { localStorage.setItem(PERSONAS_STORAGE_KEY, JSON.stringify(personas)); } catch (_) {}

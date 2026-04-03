@@ -3,9 +3,9 @@
  * ============================
  * callAI, 레이트 리미터, 서킷 브레이커, 토스트, 문서 파싱 유틸.
  */
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { LOG } from "./logger.js";
-import { PROVIDERS, ANTHROPIC_MESSAGES_URL } from "./constants.js";
+import { PROVIDERS, ANTHROPIC_MESSAGES_URL, getProviderName } from "./constants.js";
 import * as pdfjsLib from "pdfjs-dist";
 import pdfjsWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import * as XLSX from "xlsx";
@@ -15,20 +15,32 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
 
 // ─── Global Toast System ───
 const _toastListeners = new Set();
+let _toastSeq = 0;
 export function showAppToast(msg, level = "warn", durationMs = 4000) {
-  const entry = { id: Date.now(), msg, level, durationMs };
-  _toastListeners.forEach(fn => fn(entry));
+  const entry = { id: `${Date.now()}_${++_toastSeq}`, msg, level, durationMs };
+  _toastListeners.forEach((fn) => fn(entry));
 }
 export function useAppToasts() {
   const [toasts, setToasts] = useState([]);
+  const timersRef = useRef(new Set());
+
   useEffect(() => {
     const handler = (entry) => {
-      setToasts(prev => [...prev, entry]);
-      setTimeout(() => setToasts(prev => prev.filter(t => t.id !== entry.id)), entry.durationMs);
+      setToasts((prev) => [...prev, entry]);
+      const tid = setTimeout(() => {
+        setToasts((prev) => prev.filter((t) => t.id !== entry.id));
+        timersRef.current.delete(tid);
+      }, entry.durationMs);
+      timersRef.current.add(tid);
     };
     _toastListeners.add(handler);
-    return () => _toastListeners.delete(handler);
+    return () => {
+      _toastListeners.delete(handler);
+      timersRef.current.forEach((tid) => clearTimeout(tid));
+      timersRef.current.clear();
+    };
   }, []);
+
   return toasts;
 }
 
@@ -46,10 +58,11 @@ const _rateLimiter = {
       return { allowed: false, reason: `서킷 브레이커 발동 — ${sec}초 후 재시도 가능` };
     }
     if (this.locked && now >= this.lockUntil) this.locked = false;
-    this.shortWindow = this.shortWindow.filter(t => now - t < this.SHORT_WINDOW);
-    this.longWindow = this.longWindow.filter(t => now - t < this.LONG_WINDOW);
+    this.shortWindow = this.shortWindow.filter((t) => now - t < this.SHORT_WINDOW);
+    this.longWindow = this.longWindow.filter((t) => now - t < this.LONG_WINDOW);
     if (this.shortWindow.length >= this.SHORT_LIMIT) {
-      this.locked = true; this.lockUntil = now + this.LOCK_DURATION;
+      this.locked = true;
+      this.lockUntil = now + this.LOCK_DURATION;
       LOG.warn(`Circuit breaker: ${this.SHORT_LIMIT} calls in 60s — locked for 30s`);
       return { allowed: false, reason: "비정상적인 단기 폭주 감지 — 30초간 요청이 차단됩니다" };
     }
@@ -58,7 +71,11 @@ const _rateLimiter = {
     }
     return { allowed: true };
   },
-  record() { const now = Date.now(); this.shortWindow.push(now); this.longWindow.push(now); }
+  record() {
+    const now = Date.now();
+    this.shortWindow.push(now);
+    this.longWindow.push(now);
+  },
 };
 
 // ─── API Call (with retry, backoff, timeout, rate limit) ───
@@ -66,103 +83,261 @@ const CALL_AI_TIMEOUT = 120_000;
 const CALL_AI_MAX_RETRIES = 2;
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
 
-async function _rawFetch(url, options, timeoutMs = CALL_AI_TIMEOUT) {
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeMessageContent(content) {
+  if (typeof content === "string") return content;
+  try { return JSON.stringify(content); } catch { return String(content ?? ""); }
+}
+
+export function safeParseJsonText(raw, { allowObject = true, allowArray = true } = {}) {
+  const text = String(raw ?? "").replace(/```json\s*|```/gi, "").trim();
+  if (!text) return null;
+  const tryParse = (candidate) => {
+    try { return JSON.parse(candidate); } catch { return null; }
+  };
+
+  let parsed = tryParse(text);
+  if (parsed !== null) return parsed;
+
+  const shapes = [];
+  if (allowObject) shapes.push(["{", "}"]);
+  if (allowArray) shapes.push(["[", "]"]);
+  for (const [startToken, endToken] of shapes) {
+    const start = text.indexOf(startToken);
+    const end = text.lastIndexOf(endToken);
+    if (start >= 0 && end > start) {
+      parsed = tryParse(text.slice(start, end + 1));
+      if (parsed !== null) return parsed;
+    }
+  }
+  return null;
+}
+
+async function _rawFetch(url, options = {}, timeoutMs = CALL_AI_TIMEOUT) {
   const ctrl = new AbortController();
   const tid = setTimeout(() => ctrl.abort(), timeoutMs);
-  try { return await fetch(url, { ...options, signal: ctrl.signal }); }
-  finally { clearTimeout(tid); }
+  try {
+    return await fetch(url, { ...options, signal: ctrl.signal });
+  } finally {
+    clearTimeout(tid);
+  }
+}
+
+async function readResponsePayload(res) {
+  const text = await res.text();
+  if (!text) return { data: null, text: "" };
+  try {
+    return { data: JSON.parse(text), text };
+  } catch {
+    return { data: null, text };
+  }
+}
+
+function extractErrorMessageFromPayload(data, fallbackText = "") {
+  if (!data) return fallbackText;
+  if (typeof data === "string") return data;
+  if (typeof data.error === "string") return data.error;
+  if (typeof data.error?.message === "string") return data.error.message;
+  if (typeof data.message === "string") return data.message;
+  if (Array.isArray(data.errors) && data.errors.length) {
+    const first = data.errors[0];
+    if (typeof first === "string") return first;
+    if (typeof first?.message === "string") return first.message;
+  }
+  return fallbackText;
+}
+
+function toHttpErrorMessage(provider, status, statusText, data, rawText) {
+  const apiMessage = extractErrorMessageFromPayload(data, rawText).trim();
+  if (status === 400) return apiMessage || "잘못된 요청입니다. 입력 형식과 모델 설정을 확인해 주세요.";
+  if (status === 401 || status === 403) return apiMessage || `${getProviderName(provider)} 인증에 실패했습니다. API 키와 권한을 확인해 주세요.`;
+  if (status === 404) return apiMessage || "요청한 모델 또는 엔드포인트를 찾을 수 없습니다.";
+  if (status === 408) return apiMessage || "요청 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.";
+  if (status === 429) return apiMessage || "요청 한도에 도달했습니다. 잠시 후 다시 시도해 주세요.";
+  if (status >= 500) return apiMessage || `${getProviderName(provider)} 서버 오류입니다. 잠시 후 다시 시도해 주세요.`;
+  return apiMessage || `HTTP ${status}${statusText ? ` ${statusText}` : ""}`;
+}
+
+function extractClaudeText(data) {
+  const textBlocks = (data?.content || []).filter((chunk) => chunk?.type === "text" && chunk.text);
+  return textBlocks.map((chunk) => chunk.text).join("\n").trim();
+}
+
+function extractOpenAIText(data) {
+  const message = data?.choices?.[0]?.message?.content;
+  if (typeof message === "string") return message.trim();
+  if (Array.isArray(message)) {
+    return message
+      .map((part) => (typeof part === "string" ? part : part?.text || ""))
+      .join("\n")
+      .trim();
+  }
+  return "";
+}
+
+function extractGeminiText(data) {
+  return data?.candidates?.[0]?.content?.parts?.map((part) => part?.text || "").join("\n").trim() || "";
+}
+
+function normalizeFetchError(err) {
+  if (!err) return new Error("알 수 없는 오류가 발생했습니다.");
+  if (err.name === "AbortError") {
+    const timeoutErr = new Error(`API 요청 시간이 초과되었습니다 (${CALL_AI_TIMEOUT / 1000}초)`);
+    timeoutErr.retryable = true;
+    return timeoutErr;
+  }
+  if (err instanceof TypeError && /fetch|network|load failed|failed to fetch/i.test(err.message || "")) {
+    const networkErr = new Error("네트워크 연결에 실패했습니다. 연결 상태 또는 브라우저 네트워크 정책을 확인해 주세요.");
+    networkErr.retryable = true;
+    return networkErr;
+  }
+  return err;
+}
+
+async function requestJson(provider, url, options, timeoutMs = CALL_AI_TIMEOUT) {
+  const res = await _rawFetch(url, options, timeoutMs);
+  LOG.api(`${getProviderName(provider)} res status=${res.status}`);
+  const { data, text } = await readResponsePayload(res);
+  if (!res.ok) {
+    const err = new Error(toHttpErrorMessage(provider, res.status, res.statusText, data, text));
+    err.status = res.status;
+    err.retryable = RETRYABLE_STATUS.has(res.status);
+    throw err;
+  }
+  const payloadError = extractErrorMessageFromPayload(data);
+  if (payloadError) {
+    const err = new Error(payloadError);
+    err.status = res.status;
+    throw err;
+  }
+  if (!data) throw new Error("API 응답을 해석하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+  return data;
+}
+
+function getMissingKeyMessage(provider) {
+  if (provider === "claude") return "Claude API 키가 없습니다. 설정에서 글로벌 Claude 키 또는 해당 항목의 개별 키를 입력하세요.";
+  if (provider === "openai") return "OpenAI API 키가 필요합니다.";
+  if (provider === "gemini") return "Gemini API 키가 필요합니다.";
+  return "API 키가 필요합니다.";
 }
 
 export async function callAI(persona, messages, systemPrompt) {
-  const rl = _rateLimiter.check();
-  if (!rl.allowed) { showAppToast(rl.reason, "error", 5000); throw new Error(rl.reason); }
-  const sys = systemPrompt || persona.role;
-  const provider = persona.provider;
-  const apiKey = persona.apiKey;
-  const model = persona.model;
-  const hasKey = !!(apiKey && apiKey.trim());
-  LOG.api(`call provider=${provider} model=${model} hasKey=${hasKey} msgLen=${messages.length}`);
+  const provider = persona?.provider;
+  if (!provider || !PROVIDERS[provider]) throw new Error("지원하지 않는 AI 프로바이더입니다.");
 
-  let lastError;
+  const apiKey = typeof persona?.apiKey === "string" ? persona.apiKey.trim() : "";
+  const hasKey = !!apiKey;
+  const model = persona?.model || PROVIDERS[provider].models[0];
+  const sys = typeof systemPrompt === "string" ? systemPrompt : (persona?.role || "");
+  const normalizedMessages = Array.isArray(messages)
+    ? messages.map((message) => ({ role: message?.role || "user", content: normalizeMessageContent(message?.content) }))
+    : [];
+
+  if (!normalizedMessages.length) throw new Error("AI에 전달할 메시지가 없습니다.");
+  if (!hasKey) throw new Error(`[${getProviderName(provider)}] ${getMissingKeyMessage(provider)}`);
+
+  const rl = _rateLimiter.check();
+  if (!rl.allowed) {
+    showAppToast(rl.reason, "error", 5000);
+    throw new Error(rl.reason);
+  }
+
+  LOG.api(`call provider=${provider} model=${model} hasKey=${hasKey} msgLen=${normalizedMessages.length}`);
+
+  let lastError = null;
   for (let attempt = 0; attempt <= CALL_AI_MAX_RETRIES; attempt++) {
     if (attempt > 0) {
       const delay = Math.min(1000 * Math.pow(2, attempt - 1), 8000);
       LOG.warn(`Retry #${attempt} after ${delay}ms`);
-      await new Promise(r => setTimeout(r, delay));
-      const rl2 = _rateLimiter.check();
-      if (!rl2.allowed) { showAppToast(rl2.reason, "error", 5000); throw new Error(rl2.reason); }
+      await sleep(delay);
+      const rlRetry = _rateLimiter.check();
+      if (!rlRetry.allowed) {
+        showAppToast(rlRetry.reason, "error", 5000);
+        throw new Error(rlRetry.reason);
+      }
     }
+
     _rateLimiter.record();
+
     try {
       if (provider === "claude") {
-        if (!hasKey) { LOG.warn("Claude: no API key"); throw new Error("Claude API 키가 없습니다. 설정에서 글로벌 Claude 키 또는 해당 항목의 개별 키를 입력하세요."); }
-        const res = await _rawFetch(ANTHROPIC_MESSAGES_URL, {
+        const data = await requestJson(provider, ANTHROPIC_MESSAGES_URL, {
           method: "POST",
-          headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
-          body: JSON.stringify({ model: model || "claude-sonnet-4-20250514", max_tokens: 4000, system: sys, messages: messages.map(m => ({ role: m.role, content: m.content })) }),
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": apiKey,
+            "anthropic-version": "2023-06-01",
+            "anthropic-dangerous-direct-browser-access": "true",
+          },
+          body: JSON.stringify({
+            model: model || PROVIDERS.claude.models[0],
+            max_tokens: 4000,
+            system: sys,
+            messages: normalizedMessages.map((message) => ({ role: message.role, content: message.content })),
+          }),
         });
-        LOG.api(`Claude res status=${res.status}`);
-        if (RETRYABLE_STATUS.has(res.status)) { lastError = new Error(`HTTP ${res.status}`); continue; }
-        const data = await res.json();
-        if (data.error) { LOG.error(`Claude API error: ${data.error.message}`); throw new Error(data.error.message); }
+        const joined = extractClaudeText(data);
+        if (!joined && data?.stop_reason === "max_tokens") throw new Error("응답이 너무 길어 잘렸습니다. 아이디어를 짧게 줄이거나 다시 시도해 주세요.");
+        if (!joined) throw new Error("AI 응답이 비어 있습니다. 잠시 후 다시 시도해 주세요.");
         LOG.info("Claude OK");
-        const textBlocks = (data.content || []).filter(c => c.type === "text" && c.text);
-        const joined = textBlocks.map(c => c.text).join("\n").trim();
-        if (!joined && data.stop_reason === "max_tokens") throw new Error("응답이 너무 길어 잘렸습니다. 아이디어를 짧게 줄이거나 다시 시도해 주세요.");
         return joined;
       }
+
       if (provider === "openai") {
-        if (!hasKey) { LOG.error("OpenAI: no API key"); throw new Error("OpenAI API 키가 필요합니다"); }
-        const m = model || "gpt-5.4";
+        const m = model || PROVIDERS.openai.models[0];
         const isOSeries = /^o[1-9]/.test(m);
         const isNewModel = isOSeries || /^gpt-(4\.1|5\.)/.test(m);
         const sysRole = isOSeries ? "developer" : "system";
         const tokenParam = isNewModel ? "max_completion_tokens" : "max_tokens";
-        const tokenLimit = (isOSeries || isNewModel) ? 16000 : 4000;
-        LOG.api(`OpenAI model=${m} isOSeries=${isOSeries} isNewModel=${isNewModel} sysRole=${sysRole}`);
-        const body = { model: m, messages: [{ role: sysRole, content: sys }, ...messages.map(msg => ({ role: msg.role, content: typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content) }))], [tokenParam]: tokenLimit };
-        const res = await _rawFetch("https://api.openai.com/v1/chat/completions", {
+        const tokenLimit = isNewModel ? 16000 : 4000;
+        const data = await requestJson(provider, "https://api.openai.com/v1/chat/completions", {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-          body: JSON.stringify(body),
+          body: JSON.stringify({
+            model: m,
+            messages: [{ role: sysRole, content: sys }, ...normalizedMessages],
+            [tokenParam]: tokenLimit,
+          }),
         });
-        LOG.api(`OpenAI res status=${res.status}`);
-        if (RETRYABLE_STATUS.has(res.status)) { lastError = new Error(`HTTP ${res.status}`); continue; }
-        const data = await res.json();
-        if (data.error) { LOG.error(`OpenAI API error: ${data.error.message}`); throw new Error(data.error.message); }
+        const joined = extractOpenAIText(data);
+        if (!joined) throw new Error("AI 응답이 비어 있습니다. 잠시 후 다시 시도해 주세요.");
         LOG.info(`OpenAI OK model=${data.model} usage=${JSON.stringify(data.usage || {})}`);
-        return data.choices?.[0]?.message?.content || "";
+        return joined;
       }
+
       if (provider === "gemini") {
-        if (!hasKey) { LOG.error("Gemini: no API key"); throw new Error("Gemini API 키가 필요합니다"); }
-        const m = model || "gemini-2.5-flash";
-        LOG.api(`Gemini model=${m}`);
-        const res = await _rawFetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${apiKey}`, {
+        const m = model || PROVIDERS.gemini.models[0];
+        const data = await requestJson(provider, `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${apiKey}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ systemInstruction: { parts: [{ text: sys }] }, contents: messages.map(msg => ({ role: msg.role === "assistant" ? "model" : "user", parts: [{ text: msg.content }] })) }),
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: sys }] },
+            contents: normalizedMessages.map((message) => ({
+              role: message.role === "assistant" ? "model" : "user",
+              parts: [{ text: message.content }],
+            })),
+          }),
         });
-        LOG.api(`Gemini res status=${res.status}`);
-        if (RETRYABLE_STATUS.has(res.status)) { lastError = new Error(`HTTP ${res.status}`); continue; }
-        const data = await res.json();
-        if (data.error) { LOG.error(`Gemini API error: ${data.error.message}`); throw new Error(data.error.message); }
+        const joined = extractGeminiText(data);
+        if (!joined) throw new Error("AI 응답이 비어 있습니다. 잠시 후 다시 시도해 주세요.");
         LOG.info("Gemini OK");
-        return data.candidates?.[0]?.content?.parts?.map(p => p.text).join("\n") || "";
+        return joined;
       }
-      LOG.error(`Unknown provider: ${provider}`);
+
       throw new Error(`Unknown provider: ${provider}`);
     } catch (err) {
-      if (err.name === "AbortError") {
-        lastError = new Error("API 요청 시간이 초과되었습니다 (60초)");
-        if (attempt < CALL_AI_MAX_RETRIES) continue;
-      }
-      if (!RETRYABLE_STATUS.has(err?.status)) {
-        LOG.error(`callAI failed: [${PROVIDERS[provider]?.name}] ${err.message}`);
-        throw new Error(`[${PROVIDERS[provider]?.name}] ${err.message}`);
-      }
-      lastError = err;
+      const normalized = normalizeFetchError(err);
+      lastError = normalized;
+      const retryable = !!normalized?.retryable || RETRYABLE_STATUS.has(normalized?.status);
+      if (retryable && attempt < CALL_AI_MAX_RETRIES) continue;
+      LOG.error(`callAI failed: [${getProviderName(provider)}] ${normalized.message}`);
+      throw new Error(`[${getProviderName(provider)}] ${normalized.message}`);
     }
   }
+
   LOG.error(`callAI failed after ${CALL_AI_MAX_RETRIES + 1} attempts: ${lastError?.message}`);
   throw new Error(`[재시도 실패] ${lastError?.message || "알 수 없는 오류"}`);
 }
@@ -216,41 +391,73 @@ export function fileToBase64(file) {
 
 // ─── Vision (Image) ───
 export async function processImageWithVision(file, persona) {
+  if (!file) throw new Error("이미지 파일이 필요합니다.");
+  const provider = persona?.provider;
+  const apiKey = typeof persona?.apiKey === "string" ? persona.apiKey.trim() : "";
+  if (!provider || !PROVIDERS[provider]) throw new Error("지원하지 않는 AI 프로바이더");
+  if (!apiKey) throw new Error(getMissingKeyMessage(provider));
+
   const b64 = await fileToBase64(file);
   const mimeType = file.type || "image/png";
-  if (persona.provider === "claude") {
-    if (!persona.apiKey) throw new Error("Claude API 키 필요");
-    const res = await fetch(
-      typeof import.meta !== "undefined" && import.meta.env?.DEV ? "/anthropic/v1/messages" : "https://api.anthropic.com/v1/messages",
-      { method: "POST", headers: { "Content-Type": "application/json", "x-api-key": persona.apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
-        body: JSON.stringify({ model: persona.model || "claude-sonnet-4-20250514", max_tokens: 2000,
-          messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: mimeType, data: b64 } }, { type: "text", text: "이 이미지에서 비즈니스 아이디어, 컨셉, 핵심 키워드를 추출하여 한국어로 간결하게 요약해 주세요. 아이디어 입력에 바로 사용할 수 있는 형태로." }] }] }) }
-    );
-    const data = await res.json(); if (data.error) throw new Error(data.error.message);
-    return data.content?.map((c) => c.text).join("\n") || "";
+  const prompt = "이 이미지에서 비즈니스 아이디어, 컨셉, 핵심 키워드를 추출하여 한국어로 간결하게 요약해 주세요. 아이디어 입력에 바로 사용할 수 있는 형태로.";
+
+  if (provider === "claude") {
+    const data = await requestJson(provider, ANTHROPIC_MESSAGES_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body: JSON.stringify({
+        model: persona.model || PROVIDERS.claude.models[0],
+        max_tokens: 2000,
+        messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: mimeType, data: b64 } }, { type: "text", text: prompt }] }],
+      }),
+    });
+    const joined = extractClaudeText(data);
+    if (!joined) throw new Error("이미지에서 텍스트 응답을 받지 못했습니다.");
+    return joined;
   }
-  if (persona.provider === "openai") {
-    if (!persona.apiKey) throw new Error("OpenAI API 키 필요");
-    const m = persona.model || "gpt-5.4";
+
+  if (provider === "openai") {
+    const m = persona.model || PROVIDERS.openai.models[0];
     const isOSeries = /^o[1-9]/.test(m);
     const isNewModel = isOSeries || /^gpt-(4\.1|5\.)/.test(m);
     const tokenParam = isNewModel ? "max_completion_tokens" : "max_tokens";
-    const sysRole = isOSeries ? "developer" : "user";
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${persona.apiKey}` },
-      body: JSON.stringify({ model: m, messages: [{ role: sysRole, content: [{ type: "text", text: "이 이미지에서 비즈니스 아이디어, 컨셉, 핵심 키워드를 추출하여 한국어로 간결하게 요약해 주세요." }, { type: "image_url", image_url: { url: `data:${mimeType};base64,${b64}` } }] }], [tokenParam]: isOSeries ? 8000 : 2000 }) });
-    const data = await res.json(); if (data.error) throw new Error(data.error.message);
-    return data.choices?.[0]?.message?.content || "";
+    const data = await requestJson(provider, "https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: m,
+        messages: [{
+          role: "user",
+          content: [
+            { type: "text", text: prompt },
+            { type: "image_url", image_url: { url: `data:${mimeType};base64,${b64}` } },
+          ],
+        }],
+        [tokenParam]: isOSeries ? 8000 : 2000,
+      }),
+    });
+    const joined = extractOpenAIText(data);
+    if (!joined) throw new Error("이미지에서 텍스트 응답을 받지 못했습니다.");
+    return joined;
   }
-  if (persona.provider === "gemini") {
-    if (!persona.apiKey) throw new Error("Gemini API 키 필요");
-    const m = persona.model || "gemini-2.5-flash";
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${persona.apiKey}`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contents: [{ parts: [{ text: "이 이미지에서 비즈니스 아이디어, 컨셉, 핵심 키워드를 추출하여 한국어로 간결하게 요약해 주세요." }, { inline_data: { mime_type: mimeType, data: b64 } }] }] }) });
-    const data = await res.json(); if (data.error) throw new Error(data.error.message);
-    return data.candidates?.[0]?.content?.parts?.map((p) => p.text).join("\n") || "";
+
+  if (provider === "gemini") {
+    const m = persona.model || PROVIDERS.gemini.models[0];
+    const data = await requestJson(provider, `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${apiKey}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: b64 } }] }] }),
+    });
+    const joined = extractGeminiText(data);
+    if (!joined) throw new Error("이미지에서 텍스트 응답을 받지 못했습니다.");
+    return joined;
   }
+
   throw new Error("지원하지 않는 AI 프로바이더");
 }
 
@@ -271,17 +478,26 @@ const CORS_PROXIES = [
   (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
 ];
 
-async function fetchViaProxy(url) {
+export async function fetchViaProxy(url) {
+  const target = String(url || "").trim();
+  if (!target) throw new Error("유효한 URL이 없습니다.");
   for (const mkProxy of CORS_PROXIES) {
     try {
-      const res = await fetch(mkProxy(url));
+      const res = await _rawFetch(mkProxy(target), {}, 15_000);
       if (!res.ok) continue;
-      const ct = res.headers.get("content-type") || "";
-      if (ct.includes("json")) { const j = await res.json(); return j.contents || j.data || JSON.stringify(j); }
-      return await res.text();
-    } catch { continue; }
+      const { data, text } = await readResponsePayload(res);
+      if (data && typeof data === "object") {
+        if (typeof data.contents === "string") return data.contents;
+        if (typeof data.data === "string") return data.data;
+        return JSON.stringify(data);
+      }
+      if (typeof data === "string") return data;
+      if (text) return text;
+    } catch (err) {
+      LOG.warn(`fetchViaProxy failed via proxy: ${err?.message || "unknown"}`);
+    }
   }
-  throw new Error("proxy_fail");
+  throw new Error("프록시를 통해 웹 페이지를 가져오지 못했습니다.");
 }
 
 export async function extractYouTubeVideoInfo(url) {
