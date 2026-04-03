@@ -118,7 +118,7 @@ export async function callAI(persona, messages, systemPrompt) {
         const isNewModel = isOSeries || /^gpt-(4\.1|5\.)/.test(m);
         const sysRole = isOSeries ? "developer" : "system";
         const tokenParam = isNewModel ? "max_completion_tokens" : "max_tokens";
-        const tokenLimit = isOSeries ? 16000 : 4000;
+        const tokenLimit = (isOSeries || isNewModel) ? 16000 : 4000;
         LOG.api(`OpenAI model=${m} isOSeries=${isOSeries} isNewModel=${isNewModel} sysRole=${sysRole}`);
         const body = { model: m, messages: [{ role: sysRole, content: sys }, ...messages.map(msg => ({ role: msg.role, content: typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content) }))], [tokenParam]: tokenLimit };
         const res = await _rawFetch("https://api.openai.com/v1/chat/completions", {

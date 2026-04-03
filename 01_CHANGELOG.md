@@ -4,6 +4,31 @@
 
 ---
 
+## 2026-04-03 #22 — OpenAI 빈 응답 수정 · 안드로이드 파일 피커 · 프로토타이퍼 백그라운드
+
+### 변경
+
+#### ① OpenAI gpt-5.4 "AI 응답이 비어있습니다" 오류 수정
+- `api.js`: `tokenLimit`을 `isOSeries`뿐 아니라 `isNewModel`(gpt-4.1, gpt-5.x 등)도 16000으로 설정
+- 원인: gpt-5.4가 `max_completion_tokens: 4000`에서 reasoning_tokens에 전부 사용, 실제 출력 0
+- 시장 검증 · 웹앱 프로토타이퍼 모두 해결
+
+#### ② 안드로이드 파일 피커 카메라만 뜨는 문제
+- `DOCUMENT_ACCEPT`를 `"*/*"`로 변경하여 파일 관리자가 직접 열리도록 수정
+- JS 단에서 `ALLOWED_DOC_EXTS` 배열로 파일 확장자 검증 추가 (pdf, ppt, pptx, xls, xlsx, csv + 이미지)
+- 지원하지 않는 파일 선택 시 안내 alert 표시
+
+#### ③ 웹앱 프로토타이퍼 백그라운드 처리
+- `useTaskNotify("prototyper")` 통합
+- 생성 시작 시 `notifyStart()`, 완료 시 `notifyDone()` 호출
+- `EXTRA_MODE_LABELS`로 토스트 알림에 아이콘·이름 표시 ("🚀 웹앱 프로토타이퍼 완료")
+
+### 파일 변경
+- `src/api.js` — tokenLimit 조건 수정
+- `src/App.jsx` — 파일 피커 accept 변경, doc 검증 로직 추가, 프로토타이퍼 백그라운드 태스크
+
+---
+
 ## 2026-04-03 #21 — 모바일 6개 버그 수정
 
 ### 변경

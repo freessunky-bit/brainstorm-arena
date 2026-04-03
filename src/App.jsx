@@ -57,7 +57,7 @@ import {
 import { STYLES } from "./styles.js";
 
 // ─── 앱 업데이트 시점 (코드 수정 시 반드시 갱신) ───
-const LAST_UPDATED = "2026-04-03 17:30";
+const LAST_UPDATED = "2026-04-03 18:30";
 
 const MODE_TAGLINES = {
   tournament: [
@@ -1664,7 +1664,7 @@ function IdeaStackPopover({ onSelect, onClose, personas, globalKey, utilProvider
   const docInputRef = useRef(null);
   const imgInputRef = useRef(null);
 
-  const DOCUMENT_ACCEPT = ".pdf,.ppt,.pptx,.xls,.xlsx,.csv";
+  const DOCUMENT_ACCEPT = "*/*";
   const IMAGE_ACCEPT = "image/png,image/jpeg,image/webp,image/gif";
 
   const openDocPicker = () => docInputRef.current?.click();
@@ -1726,10 +1726,17 @@ function IdeaStackPopover({ onSelect, onClose, personas, globalKey, utilProvider
     setUploading("");
   };
 
+  const ALLOWED_DOC_EXTS = ["pdf", "ppt", "pptx", "xls", "xlsx", "csv"];
   const handleDocUpload = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     e.target.value = "";
+    const ext = (file.name || "").split(".").pop()?.toLowerCase();
+    if (isImageFile(file)) { handleFileUpload(file); return; }
+    if (!ext || !ALLOWED_DOC_EXTS.includes(ext)) {
+      alert(`지원하지 않는 파일 형식입니다.\n지원: ${ALLOWED_DOC_EXTS.map(e => `.${e}`).join(", ")}, 이미지`);
+      return;
+    }
     handleFileUpload(file);
   };
 
@@ -3806,6 +3813,7 @@ function WebAppPrototyper({ item, personas, globalKey, onClose }) {
   const [copied, setCopied] = useState(false);
   const [closing, setClosing] = useState(false);
   const [viewRaw, setViewRaw] = useState(false);
+  const { notifyStart, notifyDone } = useTaskNotify("prototyper");
 
   const ideaText = useMemo(() => {
     const p = item.payload;
@@ -3834,6 +3842,7 @@ function WebAppPrototyper({ item, personas, globalKey, onClose }) {
     if (!selectedSkin) return;
     setGenerating(true);
     setPhase("generating");
+    notifyStart();
     const persona = getPersona();
     if (!persona) { alert("API 키가 필요합니다"); setPhase("skin"); setGenerating(false); return; }
     const skin = PROTOTYPER_SKINS[selectedSkin];
@@ -3846,6 +3855,7 @@ function WebAppPrototyper({ item, personas, globalKey, onClose }) {
       if (!raw || !raw.trim()) throw new Error("AI 응답이 비어있습니다. 다시 시도해 주세요.");
       setResult(raw);
       setPhase("result");
+      notifyDone(clipTitle(ideaText));
     } catch (err) {
       alert(`프롬프트 생성 오류: ${err.message}`);
       setPhase("skin");
@@ -5638,9 +5648,10 @@ function useBackgroundTasks() {
     setTasks((prev) => ({ ...prev, [modeId]: "running" }));
   }, []);
 
+  const EXTRA_MODE_LABELS = { prototyper: { icon: "🚀", name: "웹앱 프로토타이퍼" } };
   const completeTask = useCallback((modeId, title) => {
     setTasks((prev) => ({ ...prev, [modeId]: "done" }));
-    const mode = MODES.find((m) => m.id === modeId);
+    const mode = MODES.find((m) => m.id === modeId) || EXTRA_MODE_LABELS[modeId];
     setToast({ modeId, text: `${mode?.icon || "✓"} ${mode?.name || modeId} 완료 — ${title || "결과 확인하기"}` });
     setTimeout(() => setToast(null), 6000);
   }, []);
