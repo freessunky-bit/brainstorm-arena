@@ -554,6 +554,14 @@ export const STYLES = `
     transition: all 0.2s; white-space: nowrap; flex-shrink: 0;
   }
   .archive-proto-btn:hover { filter: brightness(1.08); transform: translateY(-1px); }
+  .archive-proto-btn.archive-proto-done { background: linear-gradient(135deg, #059669, #10b981); }
+  .archive-proto-running {
+    display: flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 8px;
+    background: rgba(99,102,241,0.08); border: 1px solid rgba(99,102,241,0.15);
+    color: #6366f1; font-size: 11px; font-weight: 600; font-family: var(--font-sans);
+    cursor: pointer; white-space: nowrap; flex-shrink: 0; animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
   .archive-empty {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     padding: 60px 24px; text-align: center;
@@ -2374,13 +2382,14 @@ export const STYLES = `
   .proto-cta:active { transform: scale(0.98); }
 
   .proto-overlay {
-    position: fixed; inset: 0; z-index: 600;
+    position: fixed; top: 0; bottom: 0; left: 50%; transform: translateX(-50%);
+    width: 100%; max-width: 860px; z-index: 600;
     background: linear-gradient(165deg, var(--bg-deepest) 0%, var(--bg-surface-1) 48%, var(--bg-deepest) 100%);
     display: flex; flex-direction: column;
     animation: protoFadeIn 0.35s cubic-bezier(0.33,1,0.68,1);
   }
-  @keyframes protoFadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-  @keyframes protoFadeOut { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(20px); } }
+  @keyframes protoFadeIn { from { opacity: 0; transform: translateX(-50%) translateY(20px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+  @keyframes protoFadeOut { from { opacity: 1; transform: translateX(-50%) translateY(0); } to { opacity: 0; transform: translateX(-50%) translateY(20px); } }
 
   .proto-header.proto-header-premium {
     display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;

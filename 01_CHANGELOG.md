@@ -4,6 +4,37 @@
 
 ---
 
+## 2026-04-03 #24 — 프로토타이퍼 뷰포트 수정 · 백그라운드 근본 재설계 · 진행 상태 UI
+
+### 변경
+
+#### ① 프로토타이퍼 오버레이 뷰포트 깨짐 수정
+- `.proto-overlay`에 `max-width: 860px; left: 50%; transform: translateX(-50%)` 적용
+- fadeIn/fadeOut 키프레임도 translateX(-50%) 유지하도록 수정
+- 9:16 모바일 뷰포트 내에서 정상 표시
+
+#### ② 백그라운드 생성 로직 근본 재설계
+- 생성 로직을 React 컴포넌트 밖 `_startProtoGeneration()` 독립 함수로 분리
+- Promise 기반 `.then()/.catch()` — 컴포넌트 unmount와 무관하게 완료까지 진행
+- `_protoGen.listeners` 이벤트 시스템 + `useProtoGenState()` 훅으로 반응형 상태 구독
+- ideaText 2000자 클리핑으로 과도한 입력 방지
+- 백그라운드 실패 시 `showAppToast`로 에러 알림 (기존: 무응답)
+
+#### ③ 아카이브 항목 진행 상태 표시
+- 생성 중: "🔄 웹앱 프롬프트 생성중…" (펄스 애니메이션)
+- 완료: "✅ 결과 보기" 버튼 (초록)
+- 미시작: 기존 "🚀 웹앱 프롬프트"
+
+#### ④ 홈 아카이브 카드 작업중 배지
+- `bgTasks.tasks["prototyper"]` 상태를 아카이브 카드에 연동
+- 프로토타이퍼 백그라운드 진행 시 아카이브 카드에 "작업중" 배지 표시
+
+### 파일 변경
+- `src/App.jsx` — _startProtoGeneration, useProtoGenState, ArchiveView 진행표시, HomeScreen 배지
+- `src/styles.js` — proto-overlay 뷰포트, archive-proto-running, protoFadeIn/Out 키프레임
+
+---
+
 ## 2026-04-03 #23 — 아카이브→프로토타이퍼 백그라운드 생성 완전 지원 · 에러 수정
 
 ### 변경
