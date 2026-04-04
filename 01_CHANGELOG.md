@@ -4,6 +4,75 @@
 
 ---
 
+## 2026-04-04 #28 — 팝업 스크롤 배경 전파 차단 · 팝업 내부 스크롤 UX 안정화
+
+### 변경
+
+#### ① 팝업 휠 스크롤이 배경 홈화면을 움직이는 문제 수정
+- `HistoryDetailModal` / 아카이브 상세 팝업 열릴 때 `document.body.style.overflow = "hidden"` 처리
+- 팝업 닫힐 때 기존 overflow 값 복원
+- `.history-detail-overlay`에 `overflow: hidden` 추가
+
+#### ② 스크롤 체이닝(scroll chaining) 차단
+- `.history-detail-scroll`, `.history-detail-footer`에 `overscroll-behavior: contain` 적용
+- 내부 스크롤이 끝에 도달해도 이벤트가 배경으로 전파되지 않음
+
+### 파일 변경
+- `src/App.jsx` — HistoryDetailModal, ArchiveView에 body overflow lock useEffect 추가
+- `src/styles.js` — overlay overflow, scroll/footer overscroll-behavior
+
+---
+
+## 2026-04-04 #27 — 토너먼트 최종리포트 볼드 버그 수정 · 전체 리포트 스트리밍 리팩토링 · 출력 영역 고정 높이
+
+### 변경
+
+#### ① 토너먼트 최종 리포트 **bold** 텍스트 누락 버그 수정
+- `App.jsx:2113` `.replace(/\*\*/g, "")` 제거 — AI 응답의 마크다운 볼드가 통째로 제거되던 원인
+
+#### ② `callAIStream()` 전체 스트리밍 함수 신규 추가 (`api.js`)
+- Claude SSE (`content_block_delta`), OpenAI stream (`choices[0].delta.content`), Gemini `streamGenerateContent?alt=sse` 3종 지원
+- `onChunk(delta, fullText)` 콜백으로 호출자가 실시간 state 업데이트
+- 오류 발생 시 기수신 텍스트 부분 반환
+
+#### ③ `generateReportSectionStream()` 추가 (`api.js`)
+- 리포트 섹션(전략·재무·리서치 등) 스트리밍 래퍼
+
+#### ④ `StreamingRichText` 컴포넌트 전면 재설계 (`App.jsx`)
+- 타자기 커서 애니메이션 (`stream-cursor`)
+- 사용자 스크롤 감지 후 자동 스크롤 일시 중단 / 하단 복귀 시 재개
+- `variant` prop으로 맥락별 높이 제어 (card 520px / synth 600px / tot 540px / chat 320px / compact 360px)
+- 외부 스크롤 컨테이너 **인라인 스타일**로 max-height 보장 (CSS 우선순위 우회)
+
+#### ⑤ 스트리밍 적용 범위
+멀티퍼스펙티브 · 토너먼트 최종리포트 · 악마의변호인 · 시장분석(웹검색+폴백) · 경쟁스캔 · ToT 딥다이브 Phase 3 · 브랜드바이럴 · 리포트애드온 · 리포트챗
+
+### 파일 변경
+- `src/App.jsx` — StreamingRichText 재설계, 스트리밍 변환, LAST_UPDATED
+- `src/api.js` — callAIStream, generateReportSectionStream (+137줄)
+- `src/styles.js` — streamCursorBlink, .stream-cursor, .srt-scroll, .streaming-richtext (+42줄)
+
+---
+
+## 2026-04-04 #26 — 백그라운드 박스 그리드 정렬 · 토너먼트 아이디어별 아카이브 · API 키 미설정 차단 일관화
+
+### 변경
+
+#### ① 백그라운드 박스 그리드 정렬 수정
+- 프로토타이퍼 백그라운드 생성 중 표시되는 박스 레이아웃 그리드 정렬 개선
+
+#### ② 토너먼트 아이디어별 아카이브 저장
+- 토너먼트 진행 시 각 아이디어를 아카이브에 자동 저장하는 기능 추가
+
+#### ③ API 키 미설정 차단 일관화
+- 모든 분석 모드에서 API 키가 없을 경우 일관된 방식으로 차단 및 안내 메시지 출력
+- 기존 모드별 개별 처리 → 공통 `requireApiKey()` 패턴으로 통일
+
+### 파일 변경
+- `src/App.jsx` — 백그라운드 박스, 토너먼트 아카이브, API 키 차단 일관화
+
+---
+
 ## 2026-04-03 #25 — 안정성 리팩토링 · API 방어 강화 · 특수 모드 설정 정합성 보강
 
 ### 변경

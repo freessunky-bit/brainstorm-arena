@@ -57,7 +57,7 @@ import {
 import { STYLES } from "./styles.js";
 
 // ─── 앱 업데이트 시점 (코드 수정 시 반드시 갱신) ───
-const LAST_UPDATED = "2026-04-04 03:20";
+const LAST_UPDATED = "2026-04-04 22:39 KST";
 
 const MODE_TAGLINES = {
   tournament: [
@@ -1146,6 +1146,12 @@ function extractReportFromPayload(entry) {
 function HistoryDetailModal({ entry, onClose, personas, globalKey }) {
   const [copied, setCopied] = useState(false);
   const { save: saveToArchive } = useArchive();
+  useEffect(() => {
+    if (!entry) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, [entry]);
   if (!entry) return null;
   const handleCopy = () => {
     const md = copyHistoryAsRichText(entry, personas);
@@ -4269,6 +4275,12 @@ function ArchiveView({ personas, globalKey, onGoHome }) {
   const [protoItem, setProtoItem] = useState(null);
   const [showNewGroup, setShowNewGroup] = useState(false);
   const pg = useProtoGenState();
+  useEffect(() => {
+    if (!viewItem || protoItem) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, [viewItem, protoItem]);
 
   const modeTabs = [{ id: "all", label: "전체", icon: "📦" }, ...MODES.filter(m => m.id !== "archive").map(m => ({ id: m.id, label: m.name, icon: m.icon }))];
   const filtered = items.filter(it => (activeTab === "all" || it.modeId === activeTab) && (activeGroup === "all" || it.group === activeGroup));

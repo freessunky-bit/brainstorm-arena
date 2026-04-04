@@ -884,6 +884,7 @@ export const STYLES = `
   .history-detail-overlay {
     position: fixed; inset: 0; z-index: 220; background: rgba(15,23,42,0.5); backdrop-filter: blur(12px);
     display: flex; align-items: center; justify-content: center; padding: 16px; animation: fiu 0.2s ease-out;
+    overflow: hidden;
   }
   .history-detail-panel {
     width: 100%; max-width: 720px; max-height: min(94vh, 1100px); overflow: hidden; display: flex; flex-direction: column;
@@ -895,7 +896,8 @@ export const STYLES = `
   }
   .history-detail-head h3 { font-size: 17px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.3; }
   .history-detail-scroll {
-    flex: 1; min-height: 200px; overflow-y: scroll; padding: 20px;
+    flex: 1 1 auto; min-height: 120px; overflow-y: auto; padding: 20px;
+    overscroll-behavior: contain;
     scrollbar-width: thin; scrollbar-color: rgba(0,0,0,0.15) transparent;
   }
   .history-detail-scroll::-webkit-scrollbar { width: 5px; }
@@ -903,9 +905,10 @@ export const STYLES = `
   .history-detail-scroll::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 99px; }
   .history-detail-scroll::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.28); }
   .history-detail-footer {
-    flex-shrink: 0; border-top: 1px solid var(--glass-border);
+    flex: 0 1 auto; border-top: 1px solid var(--glass-border);
     background: var(--bg-surface-2); border-radius: 0 0 16px 16px;
-    overflow-y: auto; max-height: 45%;
+    overflow-y: auto; max-height: 55%;
+    overscroll-behavior: contain;
     scrollbar-width: thin; scrollbar-color: rgba(0,0,0,0.15) transparent;
   }
   .history-detail-footer::-webkit-scrollbar { width: 4px; }

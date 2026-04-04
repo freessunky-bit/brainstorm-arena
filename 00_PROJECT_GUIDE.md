@@ -184,25 +184,44 @@ npm run preview
 ## 7. 최종 업데이트 시점 표기 규칙
 
 ### 7.1 위치
-- `src/App.jsx` 상단의 `LAST_UPDATED` 상수 (import 블록 직후)
+- `src/App.jsx` 상단의 `LAST_UPDATED` 상수 (import 블록 직후, 약 60번째 줄)
 - 설정 모달(⚙️) 하단에 자동 노출됨
 
-### 7.2 형식
+### 7.2 형식 (반드시 KST 명시)
 ```
-YYYY-MM-DD HH:MM  (24시간제, 한국 시간 기준)
+"YYYY-MM-DD HH:MM KST"  ← 반드시 이 형식 그대로
 ```
-예시: `"2026-04-03 15:20"`
+예시: `"2026-04-04 22:39 KST"`
+
+> **KST = UTC+9 (한국 표준시)**
+> AI 에이전트가 시간대를 모를 경우 아래 명령으로 확인:
+> ```bash
+> # Windows (PowerShell)
+> [System.TimeZoneInfo]::ConvertTimeBySystemTimeZoneId([DateTime]::UtcNow, 'Korea Standard Time').ToString('yyyy-MM-dd HH:mm')
+> # Linux/Mac
+> TZ='Asia/Seoul' date '+%Y-%m-%d %H:%M'
+> ```
 
 ### 7.3 갱신 규칙
-- **코드를 수정할 때마다** `LAST_UPDATED` 값을 현재 시각으로 갱신한다
+- **`src/App.jsx`·`src/api.js`·`src/styles.js`·`src/prompts.js`·`src/constants.js` 중 하나라도 수정할 때마다** `LAST_UPDATED`를 갱신한다
 - `01_CHANGELOG.md` 기록과 함께 반드시 수행
 - 단순 문서 수정(`.md` 파일만 변경)은 갱신 불필요
+- 값은 수정 완료 직전 시점의 KST 현재 시각으로 입력
 
 ### 7.4 코드 위치
 ```js
-// src/App.jsx (import 블록 직후)
-const LAST_UPDATED = "YYYY-MM-DD HH:MM";
+// src/App.jsx — import 블록 직후 (~60번째 줄)
+// ─── 앱 업데이트 시점 (코드 수정 시 반드시 갱신) ───
+const LAST_UPDATED = "YYYY-MM-DD HH:MM KST";
 ```
+
+### 7.5 체크 방법 (다른 AI 에이전트를 위한 가이드)
+1. 코드 수정 시작 전: `grep -n "LAST_UPDATED" src/App.jsx` 로 현재 값 확인
+2. 코드 수정 완료 후: KST 현재 시각으로 값 교체
+3. 형식 오류 예시 (사용 금지):
+   - `"2026-04-04 03:20"` ← KST 미표기 (과거 형식, 사용 금지)
+   - `"2026-04-04T03:20:00Z"` ← ISO8601, 사용 금지
+   - UTC 시간 그대로 입력 금지
 
 ---
 
