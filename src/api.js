@@ -342,6 +342,136 @@ export async function callAI(persona, messages, systemPrompt) {
   throw new Error(`[재시도 실패] ${lastError?.message || "알 수 없는 오류"}`);
 }
 
+// ─── Streaming AI Call ───
+export async function callAIStream(persona, messages, systemPrompt, onChunk) {
+  const provider = persona?.provider;
+  if (!provider || !PROVIDERS[provider]) throw new Error("지원하지 않는 AI 프로바이더입니다.");
+
+  const apiKey = typeof persona?.apiKey === "string" ? persona.apiKey.trim() : "";
+  if (!apiKey) throw new Error(`[${getProviderName(provider)}] ${getMissingKeyMessage(provider)}`);
+  const model = persona?.model || PROVIDERS[provider].models[0];
+  const sys = typeof systemPrompt === "string" ? systemPrompt : (persona?.role || "");
+  const normalizedMessages = Array.isArray(messages)
+    ? messages.map((m) => ({ role: m?.role || "user", content: normalizeMessageContent(m?.content) }))
+    : [];
+  if (!normalizedMessages.length) throw new Error("AI에 전달할 메시지가 없습니다.");
+
+  const rl = _rateLimiter.check();
+  if (!rl.allowed) { showAppToast(rl.reason, "error", 5000); throw new Error(rl.reason); }
+  _rateLimiter.record();
+
+  LOG.api(`stream provider=${provider} model=${model}`);
+
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), CALL_AI_TIMEOUT);
+  let full = "";
+
+  try {
+    if (provider === "claude") {
+      const res = await fetch(ANTHROPIC_MESSAGES_URL, {
+        method: "POST", signal: ctrl.signal,
+        headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
+        body: JSON.stringify({ model, max_tokens: 4000, stream: true, system: sys, messages: normalizedMessages }),
+      });
+      if (!res.ok) { const { data, text } = await readResponsePayload(res); throw new Error(toHttpErrorMessage(provider, res.status, res.statusText, data, text)); }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const json = line.slice(6).trim();
+          if (json === "[DONE]") continue;
+          try {
+            const ev = JSON.parse(json);
+            if (ev.type === "content_block_delta" && ev.delta?.text) { full += ev.delta.text; onChunk(ev.delta.text, full); }
+          } catch {}
+        }
+      }
+    } else if (provider === "openai") {
+      const m = model || PROVIDERS.openai.models[0];
+      const isOSeries = /^o[1-9]/.test(m);
+      const isNewModel = isOSeries || /^gpt-(4\.1|5\.)/.test(m);
+      const sysRole = isOSeries ? "developer" : "system";
+      const tokenParam = isNewModel ? "max_completion_tokens" : "max_tokens";
+      const tokenLimit = isNewModel ? 16000 : 4000;
+      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST", signal: ctrl.signal,
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ model: m, stream: true, messages: [{ role: sysRole, content: sys }, ...normalizedMessages], [tokenParam]: tokenLimit }),
+      });
+      if (!res.ok) { const { data, text } = await readResponsePayload(res); throw new Error(toHttpErrorMessage(provider, res.status, res.statusText, data, text)); }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const json = line.slice(6).trim();
+          if (json === "[DONE]") continue;
+          try {
+            const ev = JSON.parse(json);
+            const delta = ev.choices?.[0]?.delta?.content;
+            if (delta) { full += delta; onChunk(delta, full); }
+          } catch {}
+        }
+      }
+    } else if (provider === "gemini") {
+      const m = model || PROVIDERS.gemini.models[0];
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:streamGenerateContent?alt=sse&key=${apiKey}`, {
+        method: "POST", signal: ctrl.signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: sys }] },
+          contents: normalizedMessages.map((msg) => ({ role: msg.role === "assistant" ? "model" : "user", parts: [{ text: msg.content }] })),
+        }),
+      });
+      if (!res.ok) { const { data, text } = await readResponsePayload(res); throw new Error(toHttpErrorMessage(provider, res.status, res.statusText, data, text)); }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const json = line.slice(6).trim();
+          if (!json || json === "[DONE]") continue;
+          try {
+            const ev = JSON.parse(json);
+            const parts = ev.candidates?.[0]?.content?.parts;
+            if (parts) { for (const p of parts) { if (p.text) { full += p.text; onChunk(p.text, full); } } }
+          } catch {}
+        }
+      }
+    } else {
+      throw new Error(`Unknown provider: ${provider}`);
+    }
+  } catch (err) {
+    clearTimeout(tid);
+    if (full) { LOG.warn(`Stream partial (${full.length} chars) before error: ${err.message}`); return full; }
+    throw normalizeFetchError(err);
+  }
+
+  clearTimeout(tid);
+  if (!full) throw new Error("AI 응답이 비어 있습니다. 잠시 후 다시 시도해 주세요.");
+  LOG.info(`Stream OK provider=${provider} len=${full.length}`);
+  return full;
+}
+
 // ─── Document Parsing ───
 export async function parsePDFFile(file) {
   const buf = await file.arrayBuffer();
@@ -541,6 +671,13 @@ export async function generateReportSection(persona, sectionType, idea, context,
   if (!fn) throw new Error(`Unknown section type: ${sectionType}`);
   const content = sectionType === "vc" ? fn(idea, context, existingReport) : fn(idea, context);
   return callAI(persona, [{ role: "user", content }]);
+}
+
+export async function generateReportSectionStream(persona, sectionType, idea, context, existingReport, onChunk) {
+  const fn = REPORT_ADDON_PROMPTS[sectionType];
+  if (!fn) throw new Error(`Unknown section type: ${sectionType}`);
+  const content = sectionType === "vc" ? fn(idea, context, existingReport) : fn(idea, context);
+  return callAIStream(persona, [{ role: "user", content }], undefined, onChunk);
 }
 
 // ─── Tournament Slot Fill ───

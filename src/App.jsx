@@ -29,10 +29,10 @@ import {
   REGIONS, GENDERS, AGE_RANGES,
 } from "./constants.js";
 import {
-  callAI, showAppToast, useAppToasts,
+  callAI, callAIStream, showAppToast, useAppToasts,
   parseDocumentFile, fileToBase64, processImageWithVision,
   extractYouTubeVideoId, extractYouTubeVideoInfo, fetchViaProxy, safeParseJsonText,
-  generateReportSection,
+  generateReportSection, generateReportSectionStream,
   parseIdeasLinesFromText, safeParseIdeasJson, generateTournamentSlotIdeas,
 } from "./api.js";
 import {
@@ -57,7 +57,7 @@ import {
 import { STYLES } from "./styles.js";
 
 // ─── 앱 업데이트 시점 (코드 수정 시 반드시 갱신) ───
-const LAST_UPDATED = "2026-04-03 20:33";
+const LAST_UPDATED = "2026-04-04 03:20";
 
 const MODE_TAGLINES = {
   tournament: [
@@ -575,7 +575,62 @@ function rndr(t) {
   );
 }
 
+// maxHeight: "card" 520px | "synth" 600px | "compact" 360px | "addon" 없음(부모가 관리) | "chat" 320px | "tot" 540px
+const STREAM_HEIGHTS = { card: 520, synth: 600, compact: 360, chat: 320, tot: 540 };
 
+function StreamingRichText({ text, isStreaming, variant = "card" }) {
+  const scrollRef = useRef(null);
+  const userScrolledRef = useRef(false);
+
+  useEffect(() => {
+    if (!isStreaming) { userScrolledRef.current = false; return; }
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 56;
+      userScrolledRef.current = !atBottom;
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [isStreaming]);
+
+  useEffect(() => {
+    if (!isStreaming || userScrolledRef.current) return;
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [text, isStreaming]);
+
+  if (!text) return null;
+
+  const maxPx = STREAM_HEIGHTS[variant];
+  const scrollStyle = maxPx ? {
+    maxHeight: maxPx,
+    overflowY: "auto",
+    overflowX: "hidden",
+    scrollbarWidth: "thin",
+    scrollbarColor: "rgba(0,0,0,0.10) transparent",
+    paddingRight: 6,
+  } : {};
+
+  const lines = text.split("\n");
+  const content = lines.map((line, i) => {
+    const isLast = i === lines.length - 1;
+    const cursor = isStreaming && isLast ? <span className="stream-cursor" /> : null;
+    if (line.startsWith("### ")) return <h4 key={i} className="srt-h4">{rndr(line.slice(4))}{cursor}</h4>;
+    if (line.startsWith("## ")) return <h3 key={i} className="srt-h3">{rndr(line.slice(3))}{cursor}</h3>;
+    if (line.startsWith("# ")) return <h2 key={i} className="srt-h2">{rndr(line.slice(2))}{cursor}</h2>;
+    if (line.startsWith("- ") || line.startsWith("* ")) return <div key={i} className="s-list-item"><span className="s-list-dot">·</span>{rndr(line.slice(2))}{cursor}</div>;
+    if (/^\d+\.\s/.test(line)) return <div key={i} className="s-ol-item">{rndr(line)}{cursor}</div>;
+    if (line.trim() === "") return <div key={i} className="s-spacer" />;
+    return <p key={i} className="srt-p">{rndr(line)}{cursor}</p>;
+  });
+
+  return (
+    <div ref={scrollRef} className="srt-scroll" style={scrollStyle}>
+      <div className="streaming-richtext">{content}</div>
+    </div>
+  );
+}
 
 function HistoryDetailBody({ entry, personas }) {
   const { modeId, payload } = entry;
@@ -1297,6 +1352,8 @@ function MultiPerspective({ personas, globalKey, utilProvider, utilModel, utilAp
   const { notifyStart, notifyDone } = useTaskNotify("analyze");
   const { spend } = useCredits();
   const [idea, setIdea] = useState(""); const [fb, setFb] = useState(""); const [results, setResults] = useState({}); const [synthesis, setSynthesis] = useState(""); const [status, setStatus] = useState({}); const [running, setRunning] = useState(false);
+  const [streamingIds, setStreamingIds] = useState(new Set());
+  const [synthStreaming, setSynthStreaming] = useState(false);
   const [sel, setSel] = useState(() => personas.slice(0, 3).map((p) => p.id));
   const toggle = (id) => setSel((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
   useEffect(() => {
@@ -1315,24 +1372,37 @@ function MultiPerspective({ personas, globalKey, utilProvider, utilModel, utilAp
   const run = async () => {
     if (!idea.trim()) return;
     addLinesToIdeaStack(idea);
-    if (!spend("analyze")) return; notifyStart(); addToFeedbackStack(fb); setRunning(true); setResults({}); setSynthesis(""); setDeepStep(-1); setDeepResults([]);
+    if (!spend("analyze")) return; notifyStart(); addToFeedbackStack(fb); setRunning(true); setResults({}); setSynthesis(""); setDeepStep(-1); setDeepResults([]); setStreamingIds(new Set()); setSynthStreaming(false);
     const tInfo = formatTargetForPrompt(target);
     const ns = {}; const active = personas.filter(p => sel.includes(p.id)); active.forEach(p => { ns[p.id] = "loading"; }); setStatus({ ...ns });
     const prompt = `다음 아이디어를 당신의 전문 분야 관점에서 **세계 최고 수준으로** 분석해주세요.\n\n**아이디어:** ${idea}${formatOptionalDirectionFb(fb)}${formatIdeaContext(ideaContext)}${tInfo}\n\n아래 구조를 반드시 따르세요:\n\n## 1. Executive Summary\n한 문단으로 핵심 판정 (Go/No-Go/Pivot 추천 + 핵심 근거)\n\n## 2. 기회 분석 (Why Now?)\n시장 타이밍, 기술 성숙도, 사회적 변화, 규제 환경이 왜 지금 이 아이디어에 유리한지\n\n## 3. 강점 · 차별적 우위\n경쟁 대비 10x 개선 포인트, 방어 가능한 moat, 네트워크 효과 가능성\n\n## 4. 리스크 · 약점 (Kill Zone 포함)\n빅테크 진입 위험, 규제 리스크, 기술 리스크, 시장 채택 장벽을 구체적으로\n\n## 5. 성공을 위한 핵심 조건 (Must-Have)\n이 아이디어가 성공하려면 반드시 충족해야 할 3가지 전제 조건\n\n## 6. 실행 제안\n즉시 검증해야 할 가설 TOP 3 + 최소 MVP 정의 + 초기 타깃 고객 프로필\n\n${MULTI_ANALYSIS_SUFFIX}`;
     const ar = {};
     await Promise.all(active.map(async persona => {
-      try { const p = withResolvedApiKey(persona, globalKey); const r = await callAI(p, [{ role: "user", content: prompt }]); ar[persona.id] = r; setResults(prev => ({ ...prev, [persona.id]: r })); setStatus(prev => ({ ...prev, [persona.id]: "done" })); }
-      catch (err) { ar[persona.id] = `오류: ${err.message}`; setResults(prev => ({ ...prev, [persona.id]: `오류: ${err.message}` })); setStatus(prev => ({ ...prev, [persona.id]: "error" })); }
+      try {
+        const p = withResolvedApiKey(persona, globalKey);
+        setStreamingIds(prev => new Set([...prev, persona.id]));
+        const r = await callAIStream(p, [{ role: "user", content: prompt }], undefined, (_chunk, full) => {
+          setResults(prev => ({ ...prev, [persona.id]: full }));
+        });
+        ar[persona.id] = r; setResults(prev => ({ ...prev, [persona.id]: r })); setStatus(prev => ({ ...prev, [persona.id]: "done" }));
+        setStreamingIds(prev => { const n = new Set(prev); n.delete(persona.id); return n; });
+      }
+      catch (err) { ar[persona.id] = `오류: ${err.message}`; setResults(prev => ({ ...prev, [persona.id]: `오류: ${err.message}` })); setStatus(prev => ({ ...prev, [persona.id]: "error" })); setStreamingIds(prev => { const n = new Set(prev); n.delete(persona.id); return n; }); }
     }));
     let synthesisText = "";
     try {
       const sp = `아래는 세계 최고 수준의 전문가 패널이 각자 관점에서 분석한 결과입니다.\n\n${Object.entries(ar).map(([id, r]) => { const p = personas.find(x => x.id === id); return `=== ${p?.name} ===\n${r}`; }).join("\n\n")}\n\n위 전문가 의견을 종합하여 아래 프레임워크로 **최종 투자 심사 리포트**를 작성하세요:\n\n## 1. 종합 판정 (Go / No-Go / Pivot)\n확신도(0-100%)와 함께 근거 2-3줄\n\n## 2. 전문가 합의 인사이트 TOP 5\n모든 전문가가 공통으로 지적한 기회와 리스크\n\n## 3. 전문가 간 의견 충돌\n서로 엇갈린 포인트 + 어느 쪽이 더 타당한지 판정\n\n## 4. 검증 로드맵 (30일/90일/180일)\n즉시 실행할 가설 검증, MVP 실험, 시장 테스트 단계\n\n## 5. 리소스 · 팀 구성\n필요 핵심 인력, 초기 자금 규모, 기술 스택\n\n## 6. 최대 리스크와 대응 전략\n이 아이디어를 죽일 수 있는 시나리오 3가지 + 각 대응\n\n한국어로 작성하세요.`;
       const sp2 = pickUsablePersona(personas, globalKey);
-      synthesisText = await callAI(sp2, [{ role: "user", content: sp }]);
+      setSynthStreaming(true);
+      synthesisText = await callAIStream(sp2, [{ role: "user", content: sp }], undefined, (_chunk, full) => {
+        setSynthesis(full);
+      });
       setSynthesis(synthesisText);
+      setSynthStreaming(false);
     } catch (err) {
       synthesisText = `종합 분석 오류: ${err.message}`;
       setSynthesis(synthesisText);
+      setSynthStreaming(false);
     }
 
     const deepArr = [];
@@ -1351,10 +1421,18 @@ function MultiPerspective({ personas, globalKey, utilProvider, utilModel, utilAp
           : deepPrompts[i];
         try {
           const p = pickUsablePersona(personas, globalKey);
-          const r = await callAI(p, [{ role: "user", content: actualPrompt }]);
-          deepArr.push({ step: i, key: DEEP_STEPS[i].key, name: DEEP_STEPS[i].name, icon: DEEP_STEPS[i].icon, content: r });
+          const entry = { step: i, key: DEEP_STEPS[i].key, name: DEEP_STEPS[i].name, icon: DEEP_STEPS[i].icon, content: "", _streaming: true };
+          deepArr.push(entry);
+          setDeepResults([...deepArr]);
+          const r = await callAIStream(p, [{ role: "user", content: actualPrompt }], undefined, (_chunk, full) => {
+            entry.content = full;
+            setDeepResults([...deepArr]);
+          });
+          entry.content = r;
+          entry._streaming = false;
         } catch (err) {
-          deepArr.push({ step: i, key: DEEP_STEPS[i].key, name: DEEP_STEPS[i].name, icon: DEEP_STEPS[i].icon, content: `오류: ${err.message}` });
+          deepArr[deepArr.length - 1].content = `오류: ${err.message}`;
+          deepArr[deepArr.length - 1]._streaming = false;
         }
         setDeepResults([...deepArr]);
       }
@@ -1445,8 +1523,8 @@ function MultiPerspective({ personas, globalKey, utilProvider, utilModel, utilAp
       )}
       {Object.keys(status).length > 0 && (<><div className="prog-bar-bg" style={{ marginTop: 10 }}><div className="prog-bar-fill" style={{ width: `${deep ? fullProgress : progress}%` }} /><span style={{ position: "absolute", right: 0, top: -18, fontSize: 11, fontWeight: 700, color: "var(--accent-primary)", fontVariantNumeric: "tabular-nums" }}>{Math.round(deep ? fullProgress : progress)}%</span></div><div className="prog-chips">{personas.filter(p => sel.includes(p.id)).map(p => (<span key={p.id} className={`prog-chip ${status[p.id] || "pending"}`}>{status[p.id] === "loading" && <span className="spinner" />}{status[p.id] === "done" && "✓"}{status[p.id] === "error" && "✗"}{p.icon} {p.name}</span>))}</div></>)}
       {running && <QuoteRoller />}
-      {Object.entries(results).map(([id, result]) => { const p = personas.find(x => x.id === id); if (!p) return null; const pc = PROVIDERS[p.provider]?.color || "#888"; return (<div className="r-card" key={id}><div className="r-card-header"><span className="r-card-icon">{p.icon}</span><span className="r-card-title">{p.name}</span><span className="r-card-badge" style={{ background: `${pc}10`, color: pc, border: `1px solid ${pc}20` }}>{PROVIDERS[p.provider]?.name} · {p.model}</span></div>{result.startsWith("오류:") ? <div className="err-msg">{result}</div> : <RichText text={result} />}</div>); })}
-      {synthesis && (<div className="synth-card"><h3>⚡ 종합 분석 리포트</h3><RichText text={synthesis} /></div>)}
+      {Object.entries(results).map(([id, result]) => { const p = personas.find(x => x.id === id); if (!p) return null; const pc = PROVIDERS[p.provider]?.color || "#888"; return (<div className="r-card" key={id}><div className="r-card-header"><span className="r-card-icon">{p.icon}</span><span className="r-card-title">{p.name}</span><span className="r-card-badge" style={{ background: `${pc}10`, color: pc, border: `1px solid ${pc}20` }}>{PROVIDERS[p.provider]?.name} · {p.model}</span></div>{result.startsWith("오류:") ? <div className="err-msg">{result}</div> : <StreamingRichText text={result} isStreaming={streamingIds.has(id)} />}</div>); })}
+      {synthesis && (<div className="synth-card"><h3>⚡ 종합 분석 리포트</h3><StreamingRichText text={synthesis} isStreaming={synthStreaming} variant="synth" /></div>)}
       {deepResults.length > 0 && deepResults.map((r, i) => (
         <div className="r-card" key={`deep-${i}`} style={{ marginTop: 12, borderLeft: `3px solid ${["#7c3aed", "#dc2626", "#059669", "#3182f6"][i] || "var(--accent-primary)"}` }}>
           <div className="r-card-header">
@@ -1454,7 +1532,7 @@ function MultiPerspective({ personas, globalKey, utilProvider, utilModel, utilAp
             <span className="r-card-title">{r.name}</span>
             <span className="r-card-badge" style={{ background: "rgba(124,58,237,0.08)", color: "#7c3aed", border: "1px solid rgba(124,58,237,0.15)", fontSize: 10 }}>심화</span>
           </div>
-          {String(r.content).startsWith("오류:") ? <div className="err-msg">{r.content}</div> : <RichText text={r.content} />}
+          {String(r.content).startsWith("오류:") ? <div className="err-msg">{r.content}</div> : <StreamingRichText text={r.content} isStreaming={!!r._streaming} />}
         </div>
       ))}
       {(synthesis || Object.keys(results).length > 0) && !running && (
@@ -1963,6 +2041,7 @@ function Tournament({ personas, globalKey, utilProvider, utilModel, utilApiKey, 
   const [cr, setCr] = useState("");
   const [ft, setFt] = useState([]);
   const [sr, setSr] = useState("");
+  const [srStreaming, setSrStreaming] = useState(false);
   const [activeRound, setActiveRound] = useState(0);
   const [expandedMatch, setExpandedMatch] = useState(null);
   const [dynLabels, setDynLabels] = useState({ labels: ROUND_LABELS, colors: ROUND_COLORS, emojis: ROUND_EMOJIS });
@@ -2108,13 +2187,18 @@ function Tournament({ personas, globalKey, utilProvider, utilModel, utilApiKey, 
     if (sf?.matches[0]?.loser) top3.push(sf.matches[0].loser);
     if (f2) f2.matches.forEach((m) => { if (m.loser && !top3.includes(m.loser)) top3.push(m.loser); });
     let finalReport = "";
-    try {
-      const p = mainPersona;
-      finalReport = (await callAI(p, [{ role: "user", content: `**토너먼트 최종 투자 심사 리포트**\n컨텍스트: ${ctx || "성공 확률이 가장 높은 아이디어"}${formatOptionalDirectionFb(fb)}\n\n${top3.slice(0, 3).map((x, i) => `${i + 1}위: ${x}`).join("\n")}\n\n## 1. 순위 판정 근거\n각 아이디어가 해당 순위를 받은 핵심 이유. 5개 평가 축별 결정적 차이.\n\n## 2. 🥇 1위 아이디어 — 투자 제안서\n### Why Now?\n시장 타이밍, 기술 성숙도, 규제 환경이 왜 지금 유리한지\n### 실행 로드맵\n- 30일: 핵심 가설 검증 (실험 방법 + 성공 기준)\n- 90일: MVP + 초기 사용자 100명 확보\n- 180일: PMF 증명 + 시리즈A 준비\n- 12개월: 스케일링 전략\n### 유닛 이코노믹스\nLTV:CAC 비율, 페이백 기간, 그로스 마진 추정\n### 팀 구성 · 초기 자금\n핵심 인력(직무/연차), 필요 시드 자금, 번 레이트\n### Kill Risk & 대응\n이 아이디어를 죽일 수 있는 시나리오 3가지 + 대응\n\n## 3. 🥈🥉 차순위 아이디어 활용\n피봇 가능성, 1위와의 시너지, 독립 추진 시 조건\n\n## 4. GTM 전략\nBeachhead 시장 → 확장 경로. 채널별 예상 CAC.\n\n실제 유니콘·상장사 레퍼런스를 반드시 포함하세요.\n한국어로 작성.` }])).replace(/\*\*/g, "");
-      setSr(finalReport);
-    } catch (e) { LOG.error(`Final report failed: ${e?.message}`); setSr(""); }
     setFt(top3.slice(0, 3).map((x, i) => ({ rank: i + 1, idea: x })));
     setPhase("result");
+    setActiveRound(-1);
+    try {
+      const p = mainPersona;
+      setSrStreaming(true);
+      finalReport = await callAIStream(p, [{ role: "user", content: `**토너먼트 최종 투자 심사 리포트**\n컨텍스트: ${ctx || "성공 확률이 가장 높은 아이디어"}${formatOptionalDirectionFb(fb)}\n\n${top3.slice(0, 3).map((x, i) => `${i + 1}위: ${x}`).join("\n")}\n\n## 1. 순위 판정 근거\n각 아이디어가 해당 순위를 받은 핵심 이유. 5개 평가 축별 결정적 차이.\n\n## 2. 🥇 1위 아이디어 — 투자 제안서\n### Why Now?\n시장 타이밍, 기술 성숙도, 규제 환경이 왜 지금 유리한지\n### 실행 로드맵\n- 30일: 핵심 가설 검증 (실험 방법 + 성공 기준)\n- 90일: MVP + 초기 사용자 100명 확보\n- 180일: PMF 증명 + 시리즈A 준비\n- 12개월: 스케일링 전략\n### 유닛 이코노믹스\nLTV:CAC 비율, 페이백 기간, 그로스 마진 추정\n### 팀 구성 · 초기 자금\n핵심 인력(직무/연차), 필요 시드 자금, 번 레이트\n### Kill Risk & 대응\n이 아이디어를 죽일 수 있는 시나리오 3가지 + 대응\n\n## 3. 🥈🥉 차순위 아이디어 활용\n피봇 가능성, 1위와의 시너지, 독립 추진 시 조건\n\n## 4. GTM 전략\nBeachhead 시장 → 확장 경로. 채널별 예상 CAC.\n\n실제 유니콘·상장사 레퍼런스를 반드시 포함하세요.\n한국어로 작성.` }], undefined, (_chunk, full) => {
+        setSr(full);
+      });
+      setSr(finalReport);
+      setSrStreaming(false);
+    } catch (e) { LOG.error(`Final report failed: ${e?.message}`); setSr(""); setSrStreaming(false); }
     setRunning(false);
     notifyDone(clipTitle(ctx || uids[0] || "토너먼트"));
     try {
@@ -2417,7 +2501,7 @@ function Tournament({ personas, globalKey, utilProvider, utilModel, utilApiKey, 
                   {sr && (
                     <div className="synth-card" style={{ marginTop: 20 }}>
                       <h3>⚡ 최종 분석 리포트</h3>
-                      <RichText text={sr} />
+                      <StreamingRichText text={sr} isStreaming={srStreaming} variant="synth" />
                     </div>
                   )}
                   <div className="report-sticky-actions">
@@ -2450,19 +2534,20 @@ function DevilsAdvocate({ personas, globalKey, utilProvider, utilModel, utilApiK
   const { notifyStart, notifyDone } = useTaskNotify("devil");
   const { spend } = useCredits();
   const [idea, setIdea] = useState(""); const [fb, setFb] = useState(""); const [result, setResult] = useState(""); const [running, setRunning] = useState(false);
+  const [resultStreaming, setResultStreaming] = useState(false);
   const [ideaContext, setIdeaContext] = useState("");
   const run = async () => {
     if (!idea.trim()) return;
     addLinesToIdeaStack(idea);
-    if (!spend("devil")) return; notifyStart(); addToFeedbackStack(fb); setRunning(true); setResult("");
+    if (!spend("devil")) return; notifyStart(); addToFeedbackStack(fb); setRunning(true); setResult(""); setResultStreaming(true);
     const tInfo = formatTargetForPrompt(target);
     let out = "";
     try {
       const d = personas.find(p => p.id === "devil") || personas[0]; const p = withResolvedApiKey(d, globalKey);
-      out = await callAI(p, [{ role: "user", content: `당신은 1,000개 이상의 스타트업 실패를 분석한 Pre-mortem 전문가입니다.\n이 아이디어는 **이미 실패했습니다.** 부검을 수행하세요.\n\n**아이디어:** ${idea}${formatOptionalDirectionFb(fb)}${formatIdeaContext(ideaContext)}${tInfo}\n\n## 💀 사망 선고서\n실패 일시, 누적 투자금, 최대 도달 사용자 수를 가정하고 실패 경위를 서술하세요.\n\n## ⚠️ 치명적 실패 원인 TOP 5\n각 원인별: 발생 확률(%), 시점(개월 후), 조기 경고 신호, 유사 실패 기업 사례\n\n## 🏢 Kill Zone 분석\nGoogle, Apple, Meta, Amazon, 네이버, 카카오가 동일 영역 진입 시 시나리오. 방어 가능성 0-100%.\n\n## 🔥 최악의 시나리오 3가지\n각각: 트리거 이벤트 → 연쇄 반응 → 최종 결과\n\n## ⚖️ 규제 · 법률 지뢰밭\n개인정보, 산업규제, 라이선스, 지적재산권, 국경간 규제 리스크\n\n## 🛡️ 생존 필수 조건\n이 아이디어가 살아남으려면 **반드시** 충족해야 할 5가지 전제 조건\n\n## 💊 처방전 + 피봇 옵션\n각 실패 원인별 구체적 대응 전략. 원래 아이디어가 안 되면 가능한 피봇 방향 2가지.\n\n실제 실패한 기업 사례(CB Insights 스타트업 실패 사유 데이터 참조)를 반드시 포함.\n한국어로.` }]);
+      out = await callAIStream(p, [{ role: "user", content: `당신은 1,000개 이상의 스타트업 실패를 분석한 Pre-mortem 전문가입니다.\n이 아이디어는 **이미 실패했습니다.** 부검을 수행하세요.\n\n**아이디어:** ${idea}${formatOptionalDirectionFb(fb)}${formatIdeaContext(ideaContext)}${tInfo}\n\n## 💀 사망 선고서\n실패 일시, 누적 투자금, 최대 도달 사용자 수를 가정하고 실패 경위를 서술하세요.\n\n## ⚠️ 치명적 실패 원인 TOP 5\n각 원인별: 발생 확률(%), 시점(개월 후), 조기 경고 신호, 유사 실패 기업 사례\n\n## 🏢 Kill Zone 분석\nGoogle, Apple, Meta, Amazon, 네이버, 카카오가 동일 영역 진입 시 시나리오. 방어 가능성 0-100%.\n\n## 🔥 최악의 시나리오 3가지\n각각: 트리거 이벤트 → 연쇄 반응 → 최종 결과\n\n## ⚖️ 규제 · 법률 지뢰밭\n개인정보, 산업규제, 라이선스, 지적재산권, 국경간 규제 리스크\n\n## 🛡️ 생존 필수 조건\n이 아이디어가 살아남으려면 **반드시** 충족해야 할 5가지 전제 조건\n\n## 💊 처방전 + 피봇 옵션\n각 실패 원인별 구체적 대응 전략. 원래 아이디어가 안 되면 가능한 피봇 방향 2가지.\n\n실제 실패한 기업 사례(CB Insights 스타트업 실패 사유 데이터 참조)를 반드시 포함.\n한국어로.` }], undefined, (_chunk, full) => { setResult(full); });
       setResult(out);
     } catch (err) { out = `오류: ${err.message}`; setResult(out); }
-    setRunning(false);
+    setResultStreaming(false); setRunning(false);
     notifyDone(clipTitle(idea));
     recordHistory?.({ modeId: "devil", title: clipTitle(idea), payload: { idea, fb, result: out } });
   };
@@ -2472,7 +2557,7 @@ function DevilsAdvocate({ personas, globalKey, utilProvider, utilModel, utilApiK
     <FeedbackField value={fb} onChange={setFb} placeholder="예: 규제 리스크·팀 역량 위주로 파고들어 달라…" style={{ marginBottom: 16 }} />
     <button className="btn-cta" onClick={run} disabled={running || !idea.trim()}>{running ? <><span className="spinner" /> Pre-mortem 진행 중<span className="loading-dots" /></> : <>Pre-mortem 시작<CreditCostTag costKey="devil" /></>}</button>
     {running && <QuoteRoller />}
-    {result && (<><div className="r-card" style={{ marginTop: 20, borderLeft: "3px solid var(--accent-error)" }}><div className="r-card-header"><span className="r-card-icon">💀</span><span className="r-card-title">Pre-mortem 분석 리포트</span></div>{result.startsWith("오류:") ? <div className="err-msg">{result}</div> : <RichText text={result} />}</div><div className="report-sticky-actions"><div className="report-sticky-inner"><div style={{ marginTop: 10 }}><ReportExportBar entryForExport={{ modeId: "devil", title: clipTitle(idea), payload: { idea, fb, result } }} /></div><DeepAnalysisPanel idea={idea} context={ideaContext} existingReport={result} personas={personas} globalKey={globalKey} /><ReportTools reportText={result} personas={personas} globalKey={globalKey} /><SaveToArchiveBtn modeId="devil" title={clipTitle(idea)} payload={{ idea, fb, result }} /></div></div></>)}
+    {result && (<><div className="r-card" style={{ marginTop: 20, borderLeft: "3px solid var(--accent-error)" }}><div className="r-card-header"><span className="r-card-icon">💀</span><span className="r-card-title">Pre-mortem 분석 리포트</span></div>{result.startsWith("오류:") ? <div className="err-msg">{result}</div> : <StreamingRichText text={result} isStreaming={resultStreaming} />}</div><div className="report-sticky-actions"><div className="report-sticky-inner"><div style={{ marginTop: 10 }}><ReportExportBar entryForExport={{ modeId: "devil", title: clipTitle(idea), payload: { idea, fb, result } }} /></div><DeepAnalysisPanel idea={idea} context={ideaContext} existingReport={result} personas={personas} globalKey={globalKey} /><ReportTools reportText={result} personas={personas} globalKey={globalKey} /><SaveToArchiveBtn modeId="devil" title={clipTitle(idea)} payload={{ idea, fb, result }} /></div></div></>)}
   </div>);
 }
 
@@ -2707,11 +2792,12 @@ function MarketValidation({ personas, globalKey, utilProvider, utilModel, utilAp
   const { notifyStart, notifyDone } = useTaskNotify("market");
   const { spend } = useCredits();
   const [idea, setIdea] = useState(""); const [fb, setFb] = useState(""); const [result, setResult] = useState(""); const [running, setRunning] = useState(false);
+  const [resultStreaming, setResultStreaming] = useState(false);
   const [ideaContext, setIdeaContext] = useState("");
   const run = async () => {
     if (!idea.trim()) return;
     addLinesToIdeaStack(idea);
-    if (!spend("market")) return; notifyStart(); addToFeedbackStack(fb); setRunning(true); setResult("");
+    if (!spend("market")) return; notifyStart(); addToFeedbackStack(fb); setRunning(true); setResult(""); setResultStreaming(true);
     const tInfo = formatTargetForPrompt(target);
     let out = "";
     const marketPrompt = `**투자 심사급 시장 검증 리포트**를 작성하세요.\n\n**아이디어:** ${idea}${formatOptionalDirectionFb(fb)}${formatIdeaContext(ideaContext)}${tInfo}\n\n웹 검색을 최대한 활용하여 아래 구조로 분석하세요:\n\n## 1. 시장 규모 (TAM → SAM → SOM)\n보텀업 산출 방식으로 구체적 수치. 출처 명시. CAGR 포함.\n\n## 2. 경쟁 환경 매핑\n직접 경쟁 3-5개(각 사의 펀딩/매출/사용자 수), 간접 경쟁 3개, 잠재 빅테크 진입 가능성\n\n## 3. 최신 산업 트렌드 (2024-2025)\n이 시장에 영향을 미치는 기술·규제·소비자 행동 변화\n\n## 4. 성공 · 실패 사례 분석\n유사 분야 성공 기업의 핵심 성공 요인 + 실패 기업의 사망 원인\n\n## 5. 차별화 기회\n기존 경쟁사가 놓치고 있는 Unmet Need, 가치 곡선 분석\n\n## 6. Go-to-Market 전략\nBeachhead 시장 선정 → 채널 전략 → CAC 추정 → 확장 경로\n\n## 7. 투자 매력도\n이 시장에 VC가 투자하는 이유/하지 않는 이유. 최근 관련 펀딩 딜.\n\n한국어로.`;
@@ -2720,24 +2806,41 @@ function MarketValidation({ personas, globalKey, utilProvider, utilModel, utilAp
       const ak = withResolvedApiKey(investorPersona, globalKey).apiKey;
       if (!ak) throw new Error("Claude 웹검색 불가 → 폴백");
       const res = await fetch(ANTHROPIC_MESSAGES_URL, { method: "POST", headers: { "Content-Type": "application/json", "x-api-key": ak, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
-        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 16000, tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }], messages: [{ role: "user", content: marketPrompt }] }) });
+        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 16000, stream: true, tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }], messages: [{ role: "user", content: marketPrompt }] }) });
       if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
-      const data = await res.json(); if (data.error) throw new Error(data.error.message);
-      const texts = (data.content || []).filter(c => c.type === "text").map(c => c.text);
-      out = texts.join("\n").trim();
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const json = line.slice(6).trim();
+          if (json === "[DONE]") continue;
+          try {
+            const ev = JSON.parse(json);
+            if (ev.type === "content_block_delta" && ev.delta?.text) { out += ev.delta.text; setResult(out); }
+          } catch {}
+        }
+      }
       if (!out) throw new Error("웹검색 응답에 텍스트 없음 → 폴백");
       setResult(out);
     } catch (e1) {
       LOG.warn?.("시장검증 웹검색 실패, 폴백:", e1?.message);
+      out = "";
       try {
         const p = pickUsablePersona(personas, globalKey);
         if (!p?.apiKey) throw new Error("API 키가 설정되지 않았습니다. 설정(⚙️)에서 API 키를 입력해 주세요.");
-        out = await callAI(p, [{ role: "user", content: `**투자 심사급 시장 분석** (지식 기반):\n\n아이디어: ${idea}${formatOptionalDirectionFb(fb)}${formatIdeaContext(ideaContext)}${tInfo}\n\n## 1. TAM/SAM/SOM (보텀업 추정)\n## 2. 경쟁 매핑 (직접 3개 + 간접 3개 + 빅테크 진입 가능성)\n## 3. 차별화 기회 (Unmet Need, 가치 곡선)\n## 4. 리스크 (시장/기술/규제/경쟁)\n## 5. GTM 전략 (Beachhead → 확장 경로)\n## 6. 투자 매력도 판정\n\n실제 기업·시장 레퍼런스를 반드시 포함하세요. 한국어로.` }]);
+        out = await callAIStream(p, [{ role: "user", content: `**투자 심사급 시장 분석** (지식 기반):\n\n아이디어: ${idea}${formatOptionalDirectionFb(fb)}${formatIdeaContext(ideaContext)}${tInfo}\n\n## 1. TAM/SAM/SOM (보텀업 추정)\n## 2. 경쟁 매핑 (직접 3개 + 간접 3개 + 빅테크 진입 가능성)\n## 3. 차별화 기회 (Unmet Need, 가치 곡선)\n## 4. 리스크 (시장/기술/규제/경쟁)\n## 5. GTM 전략 (Beachhead → 확장 경로)\n## 6. 투자 매력도 판정\n\n실제 기업·시장 레퍼런스를 반드시 포함하세요. 한국어로.` }], undefined, (_chunk, full) => { setResult(full); });
         if (!out || !out.trim()) throw new Error("AI 응답이 비어있습니다. 잠시 후 다시 시도해 주세요.");
         setResult(out);
       } catch (e2) { out = `오류: ${e2.message}`; setResult(out); }
     }
-    setRunning(false);
+    setResultStreaming(false); setRunning(false);
     notifyDone(clipTitle(idea));
     recordHistory?.({ modeId: "market", title: clipTitle(idea), payload: { idea, fb, result: out } });
   };
@@ -2747,7 +2850,7 @@ function MarketValidation({ personas, globalKey, utilProvider, utilModel, utilAp
     <FeedbackField value={fb} onChange={setFb} placeholder="예: 경쟁사 펀딩·최근 뉴스 위주로…" style={{ marginBottom: 16 }} />
     <button className="btn-cta" onClick={run} disabled={running || !idea.trim()}>{running ? <><span className="spinner" /> 시장 조사 중<span className="loading-dots" /></> : <>시장 검증 시작<CreditCostTag costKey="market" /></>}</button>
     {running && <QuoteRoller />}
-    {result && (<><div className="r-card" style={{ marginTop: 20, borderLeft: "3px solid var(--accent-success)" }}><div className="r-card-header"><span className="r-card-icon">🔍</span><span className="r-card-title">시장 검증 리포트</span></div>{result.startsWith("오류:") ? <div className="err-msg">{result}</div> : <RichText text={result} />}</div><div className="report-sticky-actions"><div className="report-sticky-inner"><div style={{ marginTop: 10 }}><ReportExportBar entryForExport={{ modeId: "market", title: clipTitle(idea), payload: { idea, fb, result } }} /></div><DeepAnalysisPanel idea={idea} context={ideaContext} existingReport={result} personas={personas} globalKey={globalKey} /><ReportTools reportText={result} personas={personas} globalKey={globalKey} /><SaveToArchiveBtn modeId="market" title={clipTitle(idea)} payload={{ idea, fb, result }} /></div></div></>)}
+    {result && (<><div className="r-card" style={{ marginTop: 20, borderLeft: "3px solid var(--accent-success)" }}><div className="r-card-header"><span className="r-card-icon">🔍</span><span className="r-card-title">시장 검증 리포트</span></div>{result.startsWith("오류:") ? <div className="err-msg">{result}</div> : <StreamingRichText text={result} isStreaming={resultStreaming} />}</div><div className="report-sticky-actions"><div className="report-sticky-inner"><div style={{ marginTop: 10 }}><ReportExportBar entryForExport={{ modeId: "market", title: clipTitle(idea), payload: { idea, fb, result } }} /></div><DeepAnalysisPanel idea={idea} context={ideaContext} existingReport={result} personas={personas} globalKey={globalKey} /><ReportTools reportText={result} personas={personas} globalKey={globalKey} /><SaveToArchiveBtn modeId="market" title={clipTitle(idea)} payload={{ idea, fb, result }} /></div></div></>)}
   </div>);
 }
 
@@ -2758,20 +2861,21 @@ function CompeteScan({ personas, globalKey, utilProvider, utilModel, utilApiKey 
   const { notifyStart, notifyDone } = useTaskNotify("compete");
   const { spend } = useCredits();
   const [idea, setIdea] = useState(""); const [fb, setFb] = useState(""); const [result, setResult] = useState(""); const [running, setRunning] = useState(false);
+  const [resultStreaming, setResultStreaming] = useState(false);
   const [ideaContext, setIdeaContext] = useState("");
   const run = async () => {
     if (!idea.trim()) return;
     addLinesToIdeaStack(idea);
-    if (!spend("compete")) return; notifyStart(); addToFeedbackStack(fb); setRunning(true); setResult("");
+    if (!spend("compete")) return; notifyStart(); addToFeedbackStack(fb); setRunning(true); setResult(""); setResultStreaming(true);
     const tInfo = formatTargetForPrompt(target);
     let out = "";
     try {
       const base = personas.find(pp => pp.id === "compete") || personas[0];
       const p = withResolvedApiKey(base, globalKey);
-      out = await callAI(p, [{ role: "user", content: `당신은 CB Insights·Crunchbase·PitchBook 데이터를 기반으로 경쟁 환경을 분석하는 전문 애널리스트입니다.\n\n**아이디어:** ${idea}${formatOptionalDirectionFb(fb)}${formatIdeaContext(ideaContext)}${tInfo}\n\n아래 구조로 **유사 제품·서비스·플랫폼**을 빠짐없이 탐색하세요:\n\n## 1. 직접 경쟁사 (5~10개)\n각 서비스별:\n- **이름** · 웹사이트 URL\n- 한 줄 설명\n- 펀딩 규모 / 추정 매출 / 사용자 수\n- 핵심 차별점\n- 약점 (우리가 공략 가능한 포인트)\n\n## 2. 간접 경쟁사 (3~5개)\n유사한 니즈를 다른 방식으로 해결하는 서비스\n\n## 3. 글로벌 벤치마크\n해외에서 성공한 유사 모델 (특히 미국·중국·유럽)\n\n## 4. 최근 진입자 & 트렌드\n최근 1-2년 내 신규 진입한 경쟁자, 시장 트렌드 변화\n\n## 5. 빅테크 위협 분석\nGoogle/Apple/Meta/Amazon/네이버/카카오의 동일 영역 진출 가능성\n\n## 6. 경쟁 우위 전략 제안\n이 경쟁 환경에서 차별화할 수 있는 구체적 전략 3가지\n\n실제 존재하는 기업·서비스명을 사용하세요. 한국어로 답변.` }]);
+      out = await callAIStream(p, [{ role: "user", content: `당신은 CB Insights·Crunchbase·PitchBook 데이터를 기반으로 경쟁 환경을 분석하는 전문 애널리스트입니다.\n\n**아이디어:** ${idea}${formatOptionalDirectionFb(fb)}${formatIdeaContext(ideaContext)}${tInfo}\n\n아래 구조로 **유사 제품·서비스·플랫폼**을 빠짐없이 탐색하세요:\n\n## 1. 직접 경쟁사 (5~10개)\n각 서비스별:\n- **이름** · 웹사이트 URL\n- 한 줄 설명\n- 펀딩 규모 / 추정 매출 / 사용자 수\n- 핵심 차별점\n- 약점 (우리가 공략 가능한 포인트)\n\n## 2. 간접 경쟁사 (3~5개)\n유사한 니즈를 다른 방식으로 해결하는 서비스\n\n## 3. 글로벌 벤치마크\n해외에서 성공한 유사 모델 (특히 미국·중국·유럽)\n\n## 4. 최근 진입자 & 트렌드\n최근 1-2년 내 신규 진입한 경쟁자, 시장 트렌드 변화\n\n## 5. 빅테크 위협 분석\nGoogle/Apple/Meta/Amazon/네이버/카카오의 동일 영역 진출 가능성\n\n## 6. 경쟁 우위 전략 제안\n이 경쟁 환경에서 차별화할 수 있는 구체적 전략 3가지\n\n실제 존재하는 기업·서비스명을 사용하세요. 한국어로 답변.` }], undefined, (_chunk, full) => { setResult(full); });
       setResult(out);
     } catch (err) { out = `오류: ${err.message}`; setResult(out); }
-    setRunning(false);
+    setResultStreaming(false); setRunning(false);
     notifyDone(clipTitle(idea));
     recordHistory?.({ modeId: "compete", title: clipTitle(idea), payload: { idea, fb, result: out } });
   };
@@ -2781,7 +2885,7 @@ function CompeteScan({ personas, globalKey, utilProvider, utilModel, utilApiKey 
     <FeedbackField value={fb} onChange={setFb} placeholder="예: 국내 스타트업·해외 직접 경쟁사 위주로…" style={{ marginBottom: 12 }} />
     <button className="btn-cta" onClick={run} disabled={running || !idea.trim()}>{running ? <><span className="spinner" /> 경쟁 환경 스캔 중<span className="loading-dots" /></> : <>🎯 경쟁 환경 스캔<CreditCostTag costKey="compete" /></>}</button>
     {running && <QuoteRoller />}
-    {result && (<><div className="r-card" style={{ marginTop: 20, borderLeft: "3px solid #f59e0b" }}><div className="r-card-header"><span className="r-card-icon">🎯</span><span className="r-card-title">경쟁 환경 분석 리포트</span></div>{result.startsWith("오류:") ? <div className="err-msg">{result}</div> : <RichText text={result} />}</div><div className="report-sticky-actions"><div className="report-sticky-inner"><div style={{ marginTop: 10 }}><ReportExportBar entryForExport={{ modeId: "compete", title: clipTitle(idea), payload: { idea, fb, result } }} /></div><DeepAnalysisPanel idea={idea} context={ideaContext} existingReport={result} personas={personas} globalKey={globalKey} /><ReportTools reportText={result} personas={personas} globalKey={globalKey} /><SaveToArchiveBtn modeId="compete" title={clipTitle(idea)} payload={{ idea, fb, result }} /></div></div></>)}
+    {result && (<><div className="r-card" style={{ marginTop: 20, borderLeft: "3px solid #f59e0b" }}><div className="r-card-header"><span className="r-card-icon">🎯</span><span className="r-card-title">경쟁 환경 분석 리포트</span></div>{result.startsWith("오류:") ? <div className="err-msg">{result}</div> : <StreamingRichText text={result} isStreaming={resultStreaming} />}</div><div className="report-sticky-actions"><div className="report-sticky-inner"><div style={{ marginTop: 10 }}><ReportExportBar entryForExport={{ modeId: "compete", title: clipTitle(idea), payload: { idea, fb, result } }} /></div><DeepAnalysisPanel idea={idea} context={ideaContext} existingReport={result} personas={personas} globalKey={globalKey} /><ReportTools reportText={result} personas={personas} globalKey={globalKey} /><SaveToArchiveBtn modeId="compete" title={clipTitle(idea)} payload={{ idea, fb, result }} /></div></div></>)}
   </div>);
 }
 
@@ -3571,6 +3675,7 @@ function TotDeepDive({ personas, globalKey, totProvider, totModel, totApiKey, on
   const [branches, setBranches] = useState([]);
   const [evaluation, setEvaluation] = useState(null);
   const [solution, setSolution] = useState("");
+  const [solutionStreaming, setSolutionStreaming] = useState(false);
   const [running, setRunning] = useState(false);
   const [prunedOpen, setPrunedOpen] = useState(false);
   const [statusMsg, setStatusMsg] = useState("");
@@ -3625,14 +3730,15 @@ function TotDeepDive({ personas, globalKey, totProvider, totModel, totApiKey, on
     setPhaseIdx(2); setStatusMsg("생존 방향을 심화하여 최종 솔루션을 도출합니다…");
     const winBranch = br.find(b => b.id === ev.winner) || br[0];
     let sol = "";
+    setSolutionStreaming(true);
     try {
-      sol = await callAI(p, [{ role: "user", content:
+      sol = await callAIStream(p, [{ role: "user", content:
         `아이디어: "${idea}"${formatOptionalDirectionFb(context)}${formatIdeaContext(ideaContext)}\n선택된 방향: ${winBranch.title}\n관점: ${winBranch.angle}\n근거: ${winBranch.reasoning}\n\n이 방향을 **시리즈A 투자 제안서 수준**으로 구체화하세요.\n\n## 1. Executive Summary\n엘리베이터 피치 — 한 문단으로 핵심 가치 제안. "X for Y" 포맷 포함.\n\n## 2. Problem-Solution Fit\n- 타깃 고객의 구체적 페인포인트 (정량 데이터 포함)\n- 기존 대안 vs 우리 솔루션의 10x 개선 포인트\n- Hair-on-fire 문제인지 판정\n\n## 3. 비즈니스 모델 · 유닛 이코노믹스\n- 수익 모델 (구독/트랜잭션/광고/하이브리드)\n- 예상 ARPU, LTV:CAC 비율, 페이백 기간, 그로스 마진\n- 가격 책정 전략과 근거\n\n## 4. 기술 아키텍처 · MVP 정의\n- 핵심 기술 스택\n- MVP에 반드시 포함할 기능 vs 제외할 기능\n- 개발 예상 기간·인력\n\n## 5. Go-to-Market 전략\n- Beachhead 시장 정의 (구체적 세그먼트)\n- 채널 전략 (유료/무료/파트너십)\n- 초기 100명 → 1,000명 → 10,000명 확보 전략\n\n## 6. 실행 로드맵\n- 30일: 핵심 가설 3개 + 검증 방법 + 성공 기준\n- 90일: MVP 출시 + 초기 메트릭\n- 180일: PMF 증명 조건\n- 12개월: 스케일링 전략\n\n## 7. 팀 구성 · 자금\n핵심 인력 (직무/연차/채용 우선순위), 시드 자금 규모, 번 레이트\n\n## 8. 리스크 매트릭스 · 대응\n리스크별: 발생 확률(%), 임팩트(상/중/하), 대응 전략, 조기 경고 신호\n\n## 9. 최종 판정\nGo / No-Go / Pivot — 확신도(0-100%), 유사 성공 기업 레퍼런스\n\n한국어로 작성하세요.`
-      }], TOT_SYSTEM);
+      }], TOT_SYSTEM, (_chunk, full) => { setSolution(full); });
     } catch (err) {
       sol = `심화 전개 오류: ${err.message}`;
     }
-    setSolution(sol);
+    setSolution(sol); setSolutionStreaming(false);
 
     setPhase("result"); setPhaseIdx(3); setRunning(false); setStatusMsg("");
     notifyDone(clipTitle(idea));
@@ -3756,7 +3862,7 @@ function TotDeepDive({ personas, globalKey, totProvider, totModel, totApiKey, on
       {/* Main Solution */}
       <div className="tot-solution">
         <div className="tot-solution-badge">🎯 최적 솔루션 · Branch {winId}: {winBranch?.title || "선택됨"}</div>
-        <RichText text={solution} />
+        <StreamingRichText text={solution} isStreaming={solutionStreaming} variant="tot" />
       </div>
 
       {/* Evaluation reasoning */}
@@ -4404,8 +4510,11 @@ ${reportSummary.slice(0, 3000)}
 [사용자 질문]: ${q}`;
       const history = newMsgs.slice(-6).map((m) => ({ role: m.role === "ai" ? "assistant" : "user", content: m.text }));
       history[history.length - 1].content = contextMsg;
-      const result = await callAI(persona, history, REPORT_CHAT_SYSTEM);
-      setMsgs((prev) => [...prev, { role: "ai", text: result }]);
+      setMsgs((prev) => [...prev, { role: "ai", text: "", _streaming: true }]);
+      const result = await callAIStream(persona, history, REPORT_CHAT_SYSTEM, (_chunk, full) => {
+        setMsgs((prev) => { const n = [...prev]; n[n.length - 1] = { role: "ai", text: full, _streaming: true }; return n; });
+      });
+      setMsgs((prev) => { const n = [...prev]; n[n.length - 1] = { role: "ai", text: result }; return n; });
     } catch (err) {
       setMsgs((prev) => [...prev, { role: "ai", text: `⚠️ 오류: ${err.message}` }]);
     } finally {
@@ -4441,10 +4550,10 @@ ${reportSummary.slice(0, 3000)}
             {msgs.map((m, i) => (
               <div key={i} className={`chat-msg ${m.role}`}>
                 {m.role === "ai" && <div className="chat-avatar-sm">🤖</div>}
-                <div className="chat-bubble"><RichText text={m.text} /></div>
+                <div className="chat-bubble"><StreamingRichText text={m.text} isStreaming={!!m._streaming} variant="chat" /></div>
               </div>
             ))}
-            {loading && (
+            {loading && !msgs[msgs.length - 1]?._streaming && (
               <div className="chat-msg ai">
                 <div className="chat-avatar-sm">🤖</div>
                 <div className="chat-bubble" style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -4487,23 +4596,28 @@ function BrandViralSection({ idea, context, existingReport, personas, globalKey 
   const [loading, setLoading] = useState({});
   const [open, setOpen] = useState({});
 
+  const [streaming, setStreaming] = useState({});
+
   const generate = async (type) => {
     if (results[type]) { setOpen(p => ({ ...p, [type]: !p[type] })); return; }
     if (Object.values(loading).some((v) => v)) return;
-    if (!spend("brand_viral")) return; setLoading(p => ({ ...p, [type]: true }));
+    if (!spend("brand_viral")) return; setLoading(p => ({ ...p, [type]: true })); setStreaming(p => ({ ...p, [type]: true }));
     try {
       const persona = pickUsablePersona(personas, globalKey);
       if (!persona?.apiKey) throw new Error("API 키를 설정해 주세요.");
       const fn = BRAND_VIRAL_PROMPTS[type];
       const content = fn(idea, context, existingReport);
-      const result = await callAI(persona, [{ role: "user", content }]);
+      const result = await callAIStream(persona, [{ role: "user", content }], undefined, (_chunk, full) => {
+        setResults(p => ({ ...p, [type]: full }));
+        setOpen(p => ({ ...p, [type]: true }));
+      });
       setResults(p => ({ ...p, [type]: result }));
       setOpen(p => ({ ...p, [type]: true }));
     } catch (err) {
       setResults(p => ({ ...p, [type]: `오류: ${err.message}` }));
       setOpen(p => ({ ...p, [type]: true }));
     }
-    setLoading(p => ({ ...p, [type]: false }));
+    setStreaming(p => ({ ...p, [type]: false })); setLoading(p => ({ ...p, [type]: false }));
   };
 
   const configs = {
@@ -4540,7 +4654,7 @@ function BrandViralSection({ idea, context, existingReport, personas, globalKey 
             </div>
             {open[type] && (
               <div className="brand-viral-result-body">
-                {res.startsWith("오류:") ? <div className="err-msg">{res}</div> : <RichText text={res} />}
+                {res.startsWith("오류:") ? <div className="err-msg">{res}</div> : <StreamingRichText text={res} isStreaming={!!streaming[type]} variant="compact" />}
               </div>
             )}
           </div>
@@ -4721,6 +4835,8 @@ function ReportAddonSection({ idea, context, existingReport, personas, globalKey
   const [loading, setLoading] = useState({});
   const [open, setOpen] = useState({});
 
+  const [streaming, setStreaming] = useState({});
+
   const generate = async (key) => {
     if (results[key]) { setOpen((p) => ({ ...p, [key]: !p[key] })); return; }
     if (Object.values(loading).some((v) => v)) {
@@ -4728,15 +4844,21 @@ function ReportAddonSection({ idea, context, existingReport, personas, globalKey
       return;
     }
     const costKey = (key === "branding" || key === "viral") ? key : "report_addon";
-    if (!spend(costKey)) return; setLoading((p) => ({ ...p, [key]: true }));
+    if (!spend(costKey)) return; setLoading((p) => ({ ...p, [key]: true })); setStreaming((p) => ({ ...p, [key]: true }));
     try {
       const persona = pickUsablePersona(personas, globalKey);
       let r;
       if (key === "branding" || key === "viral") {
         const fn = BRAND_VIRAL_PROMPTS[key];
-        r = await callAI(persona, [{ role: "user", content: fn(idea, context, existingReport) }]);
+        r = await callAIStream(persona, [{ role: "user", content: fn(idea, context, existingReport) }], undefined, (_chunk, full) => {
+          setResults((p) => ({ ...p, [key]: full }));
+          setOpen((p) => ({ ...p, [key]: true }));
+        });
       } else {
-        r = await generateReportSection(persona, key, idea, context, existingReport);
+        r = await generateReportSectionStream(persona, key, idea, context, existingReport, (_chunk, full) => {
+          setResults((p) => ({ ...p, [key]: full }));
+          setOpen((p) => ({ ...p, [key]: true }));
+        });
       }
       setResults((p) => ({ ...p, [key]: r }));
       setOpen((p) => ({ ...p, [key]: true }));
@@ -4744,7 +4866,7 @@ function ReportAddonSection({ idea, context, existingReport, personas, globalKey
       setResults((p) => ({ ...p, [key]: `오류: ${err.message}` }));
       setOpen((p) => ({ ...p, [key]: true }));
     }
-    setLoading((p) => ({ ...p, [key]: false }));
+    setStreaming((p) => ({ ...p, [key]: false })); setLoading((p) => ({ ...p, [key]: false }));
   };
 
   return (
@@ -4780,7 +4902,7 @@ function ReportAddonSection({ idea, context, existingReport, personas, globalKey
             <span className="addon-result-collapse" data-open={String(!!open[a.key])}>▾</span>
           </div>
           <div className="report-scroll-box" style={{ padding: "0 14px 14px" }}>
-            {String(results[a.key]).startsWith("오류:") ? <div className="err-msg">{results[a.key]}</div> : <RichText text={results[a.key]} />}
+            {String(results[a.key]).startsWith("오류:") ? <div className="err-msg">{results[a.key]}</div> : <StreamingRichText text={results[a.key]} isStreaming={!!streaming[a.key]} variant="addon" />}
           </div>
         </div>
       ) : null)}

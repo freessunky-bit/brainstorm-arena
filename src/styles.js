@@ -2688,4 +2688,46 @@ export const STYLES = `
     .proto-header-premium { padding: 10px 14px 12px; }
     .proto-body { padding: 18px 14px 28px; }
   }
+
+  /* ─── Streaming RichText ─── */
+  @keyframes streamCursorBlink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+  .stream-cursor {
+    display: inline-block;
+    width: 2px;
+    height: 1.1em;
+    background: var(--accent-primary);
+    margin-left: 2px;
+    vertical-align: text-bottom;
+    animation: streamCursorBlink 0.8s ease-in-out infinite;
+    border-radius: 1px;
+  }
+
+  /* srt-scroll: 인라인 스타일(maxHeight/overflow)이 실제 제어, 이 클래스는 스크롤바 스킨만 담당 */
+  .srt-scroll::-webkit-scrollbar { width: 5px; }
+  .srt-scroll::-webkit-scrollbar-track { background: transparent; }
+  .srt-scroll::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.10); border-radius: 99px; }
+  .srt-scroll::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.18); }
+
+  /* streaming-richtext: 텍스트 스타일 전담 (높이 제어 없음) */
+  .streaming-richtext {
+    font-size: 14px;
+    line-height: 1.75;
+    letter-spacing: -0.02em;
+    color: var(--text-secondary);
+  }
+  .srt-h2 { color: var(--text-primary); margin: 20px 0 10px; font-size: 18px; font-weight: 800; letter-spacing: -0.03em; }
+  .srt-h3 { color: var(--text-primary); margin: 18px 0 8px; font-size: 16px; font-weight: 800; letter-spacing: -0.03em; }
+  .srt-h4 { color: var(--text-primary); margin: 16px 0 6px; font-size: 14px; font-weight: 700; }
+  .srt-p  { margin: 3px 0; }
+  .streaming-richtext .s-list-item { padding-left: 14px; margin: 3px 0; position: relative; }
+  .streaming-richtext .s-list-dot { position: absolute; left: 0; color: var(--text-muted); }
+  .streaming-richtext .s-ol-item { padding-left: 18px; margin: 3px 0; }
+  .streaming-richtext .s-spacer { height: 6px; }
+  .streaming-richtext strong { color: var(--text-primary); font-weight: 600; }
+
+  /* chat-bubble 내부 텍스트 크기 조정 */
+  .chat-bubble .streaming-richtext { font-size: 13px; }
 `;
