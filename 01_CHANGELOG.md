@@ -4,6 +4,85 @@
 
 ---
 
+## 2026-04-05 #30 — PC/데스크톱 반응형 스케일업 · ViewportProvider 코드 구조 개선
+
+### 변경
+
+#### ① PC 웹브라우저 폰트/레이아웃 스케일업
+- `min-width: 1024px` 데스크톱 미디어 쿼리 신설 (40+ 요소 조정)
+  - 기본 font-size 15px → 16px, line-height 1.65 → 1.7
+  - 히어로: h1 40px, p 17px / 모드카드: name 17px, desc 14px, icon 52px
+  - 입력필드: font 16px, padding 증가 / CTA 버튼: 16px, min-height 54px
+  - 리포트 카드: title 16px, padding 22px / 히스토리: title 14px
+  - 설정 모달·코파일럿·프로토타이퍼·브라켓 등 전면 스케일업
+- `min-width: 1280px` 와이드 데스크톱 쿼리 추가
+  - app-shell max-width 980px / 히어로 h1 44px / 모드카드 name 18px
+  - 리포트 카드 title 17px / 히스토리·설정 모달 폭 확대
+- 기존 `min-width: 640px` 태블릿 쿼리와 계층적으로 동작
+
+#### ② ViewportProvider 반응형 상태 관리 인프라
+- `ViewportContext` + `useViewport()` 훅 추가 (`isDesktop`, `isMobile`, `width`)
+- `ViewportProvider`가 App 최상위를 감싸 모든 컴포넌트에서 접근 가능
+- `requestAnimationFrame` 기반 resize 디바운싱으로 성능 최적화
+- 향후 PC/모바일 이원화 로직(조건부 렌더링, 레이아웃 분기) 즉시 적용 가능
+
+### 파일 변경
+- `src/styles.js` — `@media (min-width: 1024px)`, `@media (min-width: 1280px)` 블록 추가
+- `src/App.jsx` — `ViewportProvider`/`useViewport` 훅, App return에 Provider 래핑
+
+---
+
+## 2026-04-04~05 #29 — SCAMPER 스트리밍 · 프로토타이퍼 스트리밍 · 애드온 캐시 · SCAMPER 프리미엄 UI · YouTube/웹 추출 재설계
+
+### 변경
+
+#### ⓪-b 웹 URL 본문 추출 4단 폴백 엔진 재설계
+- **Jina Reader API** (`r.jina.ai`) 1차 적용: CORS OK, 무료 20RPM, JS 렌더링(SPA/Notion) 지원, 마크다운 반환
+- **Microlink API** 2차 폴백: 구조화된 메타데이터 + 본문 추출
+- **Reddit JSON** 전용 경로: `.json` URL 우회로 게시글 + 상위 댓글 5개 추출
+- **CORS 프록시 + Readability.js** 3차 폴백: Mozilla 리더모드 엔진 + 수동 시맨틱 추출
+- Google AMP URL 자동 변환, OG 메타(제목·사이트명·작성자) 수집
+- AI 프롬프트 개선: 본문 요약 + 8개+ 실행 가능한 아이디어(서비스·타겟·수익 모델)
+
+#### ⓪ YouTube 영상 정보 추출 근본 재설계
+- Invidious API (5개 인스턴스) → Piped API (3개 인스턴스) → YouTube HTML 파싱 → noembed 순 다중 폴백
+- `ytInitialPlayerResponse` JSON 파싱으로 제목·설명·자막 URL 추출
+- 자막: 한국어 우선 → 영어/일본어 → 첫 번째 트랙 순 자동 선택
+- VTT/XML 자막 포맷 모두 파싱, 키워드/태그 정보도 수집
+- AI 프롬프트 개선: 자막 전문 분석 시 8개+ 아이디어(서비스 형태·타겟·수익 모델 포함)
+
+#### ① SCAMPER 확장 기능 응답 없음 수정 + 스트리밍 전환
+- `callAI` → `callAIStream`(maxTokens: 8000)으로 전환, 실시간 스트리밍 표시
+- `parseScamperResponse()` 멀티 전략 파서로 7축 분리 파싱
+
+#### ② 프로토타이퍼 마스터프롬프트 합성 타임아웃 수정
+- `callAI` → `callAIStream`(maxTokens: 16000, timeoutMs: 300초)으로 전환
+- 스트리밍 중간 결과 표시 (`StreamingRichText` + 문자 수 카운터)
+- 오류 시 200자 이상 수신된 부분 결과 복원
+
+#### ③ 애드온(추가분석도구) 결과 아카이브 저장 연동
+- `_addonCache` 모듈 레벨 캐시로 세션 내 애드온 결과 보존
+- `SaveToArchiveBtn` · `ArchiveSaveModal`에서 저장 시 `_addons` 필드로 payload에 병합
+- `SavedAddonsDisplay` 컴포넌트: 아카이브/히스토리 팝업에서 저장된 애드온 결과 표시
+
+#### ④ 아카이브 저장 모달 z-index 수정
+- `.archive-save-modal` z-index 200 → 230 (히스토리 팝업 위에 표시)
+
+#### ⑤ 토너먼트 라운드명 동적 표시
+- 8강/16강 모드에서도 "32강" 표시되던 문제 → 실제 라운드명으로 동적 생성
+
+#### ⑥ SCAMPER 프리미엄 카드 UI 리디자인
+- 7축별 고유 색상 + 아이콘 박스 + 레터 뱃지 + 그라데이션 코너 + surface-2 콘텐츠 영역
+- 라이브 결과·히스토리 팝업·아카이브 팝업 모두 동일 프리미엄 디자인 적용
+
+### 파일 변경
+- `src/App.jsx` — SCAMPER/프로토타이퍼 스트리밍, 애드온 캐시, z-index, 토너먼트 라운드명, SCAMPER 프리미엄 UI, YouTube/웹 분석 프롬프트 개선
+- `src/api.js` — `callAIStream` options, YouTube 다중 API, 웹 Jina Reader/Microlink/Reddit JSON/Readability 4단 폴백
+- `src/styles.js` — `.archive-save-modal` z-index, `.proto-loading-phase` 레이아웃
+- `package.json` — `@mozilla/readability` 의존성 추가
+
+---
+
 ## 2026-04-04 #28 — 팝업 스크롤 배경 전파 차단 · 팝업 내부 스크롤 UX 안정화
 
 ### 변경

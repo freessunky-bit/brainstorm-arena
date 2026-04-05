@@ -455,7 +455,7 @@ export const STYLES = `
   .plan-pill-live { background: rgba(5,150,105,0.08); color: #059669; }
   .plan-pill-live .plan-dot { width: 5px; height: 5px; border-radius: 50%; background: #059669; animation: planPulse 2s ease-in-out infinite; }
   @keyframes planPulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.75; transform: scale(0.92); } }
-  .archive-save-modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 200; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; animation: fdIn 0.15s ease; }
+  .archive-save-modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 230; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; animation: fdIn 0.15s ease; }
   .archive-save-panel { background: var(--bg-surface-1); border: 1px solid var(--glass-border); border-radius: 18px; box-shadow: 0 20px 60px rgba(0,0,0,0.15); width: min(380px, 92vw); padding: 24px; animation: fiu 0.25s ease-out; }
   .archive-filter-block { margin-bottom: 16px; }
   .archive-top-bar {
@@ -973,7 +973,7 @@ export const STYLES = `
     .footer span { font-size: 9.5px; }
   }
 
-  /* ── Desktop scale-up (min-width: 640px) ── */
+  /* ── Tablet scale-up (min-width: 640px) ── */
   @media (min-width: 640px) {
     .top-toolbar { padding: 14px 4px 16px; gap: 12px; }
     .brand-mark { width: 42px; height: 42px; border-radius: 12px; }
@@ -991,6 +991,126 @@ export const STYLES = `
     .s-label { font-size: 13px; margin-bottom: 8px; }
     .mode-title { font-size: 22px; margin: 8px 0 20px; }
     .footer { padding: 32px 0 20px; margin-top: 32px; }
+  }
+
+  /* ── Desktop PC scale-up (min-width: 1024px) ── */
+  @media (min-width: 1024px) {
+    body, html, #root { font-size: 16px; line-height: 1.7; }
+    .app-shell { max-width: 920px; padding: 0 32px; }
+
+    /* ── 톱 툴바 ── */
+    .top-toolbar { padding: 18px 4px 20px; }
+    .brand-mark { width: 46px; height: 46px; border-radius: 13px; }
+    .brand-mark svg { width: 22px; height: 22px; }
+    .brand-lines strong { font-size: 17px; }
+    .brand-lines span { font-size: 12px; }
+    .icon-tool-btn { width: 40px; height: 40px; }
+
+    /* ── 히어로 ── */
+    .hero { padding: 48px 4px 32px; }
+    .hero-badge { padding: 6px 16px; font-size: 12px; margin-bottom: 18px; }
+    .hero h1 { font-size: 40px; margin-bottom: 12px; }
+    .hero p { font-size: 17px; line-height: 1.6; }
+
+    /* ── 홈 카테고리 탭 ── */
+    .home-cat-tab { padding: 8px 18px; font-size: 14px; }
+
+    /* ── 모드 카드 그리드 ── */
+    .mode-grid { gap: 10px; padding-bottom: 48px; }
+    .mode-card { padding: 20px 24px; gap: 18px; border-radius: var(--radius-xl); }
+    .mc-icon { width: 52px; height: 52px; font-size: 25px; border-radius: 15px; }
+    .mc-name { font-size: 17px; }
+    .mc-desc { font-size: 14px; }
+    .mc-arrow { font-size: 20px; }
+
+    /* ── 분석 모드 내부 ── */
+    .back-btn { font-size: 16px; }
+    .breadcrumb-item { font-size: 14px; }
+    .breadcrumb-current { font-size: 14px; }
+    .mode-title { font-size: 24px; margin: 10px 0 22px; }
+    .mode-tagline { font-size: 13px; padding: 12px 16px; }
+    .s-label { font-size: 13px; margin-bottom: 10px; }
+
+    /* ── 입력 필드 ── */
+    input[type="text"], input[type="password"], textarea, select {
+      padding: 13px 16px; font-size: 16px; border-radius: 10px;
+    }
+    textarea { min-height: 120px; }
+    .btn-cta { padding: 16px 28px; min-height: 54px; font-size: 16px; border-radius: 10px; }
+    .btn-ghost { padding: 11px 20px; font-size: 15px; }
+    .chip { padding: 7px 16px; font-size: 14px; }
+
+    /* ── 리포트 카드 ── */
+    .r-card { padding: 22px; border-radius: 12px; margin-bottom: 14px; }
+    .r-card-icon { font-size: 22px; }
+    .r-card-title { font-size: 16px; }
+    .r-card-header { gap: 12px; margin-bottom: 16px; padding-bottom: 14px; }
+    .synth-card { padding: 24px; }
+    .synth-card h3 { font-size: 16px; }
+
+    /* ── ToT 브랜치 ── */
+    .tot-branches { gap: 12px; }
+    .tot-solution { padding: 20px 18px; }
+    .tot-step-label { font-size: 11px; }
+
+    /* ── 토너먼트 ── */
+    .bracket-round { min-width: 220px; }
+    .bracket-round-title { font-size: 12px; }
+    .bracket-entry { font-size: 13px; }
+    .bracket-reason { font-size: 11px; }
+    .final-rank { padding: 16px; }
+    .rank-title { font-size: 15px; }
+    .tournament-slot-textarea { font-size: 14px; padding: 10px 12px; }
+
+    /* ── 히스토리 ── */
+    .history-row { padding: 14px 16px; }
+    .history-row-title { font-size: 14px; }
+    .history-row-time { font-size: 12px; }
+    .history-detail-panel { max-width: 780px; }
+
+    /* ── 프로그레스 ── */
+    .prog-chip { font-size: 13px; padding: 5px 12px; }
+
+    /* ── 아카이브 ── */
+    .archive-card-title { font-size: 15px; }
+    .archive-card-date { font-size: 12px; }
+    .archive-btn-row button { font-size: 13px; }
+
+    /* ── 설정 모달 ── */
+    .modal-sheet { max-width: 900px; padding: 0 28px 28px; }
+    .persona-cfg-row select, .persona-cfg-row input { font-size: 14px; padding: 11px 14px; }
+
+    /* ── 추가분석도구 ── */
+    .report-addon-grid { gap: 10px; }
+    .report-addon-btn { padding: 14px 16px; font-size: 13px; }
+
+    /* ── 코파일럿 / 리파인 ── */
+    .rc-panel { width: 440px; }
+    .rc-msg { font-size: 14px; }
+
+    /* ── 프로토타이퍼 ── */
+    .proto-skin-preview { height: 110px; font-size: 34px; }
+    .proto-code-content { font-size: 13px; }
+    .proto-rendered-block { max-height: min(68vh, 700px); }
+
+    /* ── 푸터 ── */
+    .footer { padding: 36px 0 24px; margin-top: 36px; }
+    .footer span { font-size: 12px; }
+  }
+
+  /* ── Wide Desktop (min-width: 1280px) ── */
+  @media (min-width: 1280px) {
+    .app-shell { max-width: 980px; padding: 0 40px; }
+    .hero h1 { font-size: 44px; }
+    .hero p { font-size: 18px; }
+    .mode-card { padding: 22px 28px; }
+    .mc-name { font-size: 18px; }
+    .mc-desc { font-size: 14.5px; }
+    .mode-title { font-size: 26px; }
+    .r-card { padding: 24px; }
+    .r-card-title { font-size: 17px; }
+    .history-detail-panel { max-width: 840px; }
+    .modal-sheet { max-width: 940px; }
   }
 
   /* ── Mini Stack Popover (상황 보강 / 피드백 방향 히스토리) ── */
@@ -2498,7 +2618,7 @@ export const STYLES = `
 
   .proto-loading-phase {
     display: flex; flex-direction: column; align-items: center; gap: 14px;
-    padding: 32px 16px;
+    padding: 32px 16px; width: 100%; min-height: 0; flex: 1;
   }
   .proto-loading-title {
     font-size: 14px; font-weight: 700; color: var(--text-secondary); letter-spacing: -0.02em;

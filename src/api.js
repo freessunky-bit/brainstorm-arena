@@ -10,6 +10,7 @@ import * as pdfjsLib from "pdfjs-dist";
 import pdfjsWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
+import { Readability } from "@mozilla/readability";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
 
@@ -343,7 +344,7 @@ export async function callAI(persona, messages, systemPrompt) {
 }
 
 // ─── Streaming AI Call ───
-export async function callAIStream(persona, messages, systemPrompt, onChunk) {
+export async function callAIStream(persona, messages, systemPrompt, onChunk, { maxTokens, timeoutMs } = {}) {
   const provider = persona?.provider;
   if (!provider || !PROVIDERS[provider]) throw new Error("지원하지 않는 AI 프로바이더입니다.");
 
@@ -362,16 +363,18 @@ export async function callAIStream(persona, messages, systemPrompt, onChunk) {
 
   LOG.api(`stream provider=${provider} model=${model}`);
 
+  const effectiveTimeout = timeoutMs || CALL_AI_TIMEOUT;
   const ctrl = new AbortController();
-  const tid = setTimeout(() => ctrl.abort(), CALL_AI_TIMEOUT);
+  const tid = setTimeout(() => ctrl.abort(), effectiveTimeout);
   let full = "";
 
   try {
     if (provider === "claude") {
+      const claudeMaxTokens = maxTokens || 4000;
       const res = await fetch(ANTHROPIC_MESSAGES_URL, {
         method: "POST", signal: ctrl.signal,
         headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
-        body: JSON.stringify({ model, max_tokens: 4000, stream: true, system: sys, messages: normalizedMessages }),
+        body: JSON.stringify({ model, max_tokens: claudeMaxTokens, stream: true, system: sys, messages: normalizedMessages }),
       });
       if (!res.ok) { const { data, text } = await readResponsePayload(res); throw new Error(toHttpErrorMessage(provider, res.status, res.statusText, data, text)); }
       const reader = res.body.getReader();
@@ -399,7 +402,7 @@ export async function callAIStream(persona, messages, systemPrompt, onChunk) {
       const isNewModel = isOSeries || /^gpt-(4\.1|5\.)/.test(m);
       const sysRole = isOSeries ? "developer" : "system";
       const tokenParam = isNewModel ? "max_completion_tokens" : "max_tokens";
-      const tokenLimit = isNewModel ? 16000 : 4000;
+      const tokenLimit = maxTokens || (isNewModel ? 16000 : 4000);
       const res = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST", signal: ctrl.signal,
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
@@ -630,37 +633,453 @@ export async function fetchViaProxy(url) {
   throw new Error("프록시를 통해 웹 페이지를 가져오지 못했습니다.");
 }
 
+// ─── Web Article Extraction (Jina Reader + Microlink + Readability.js 4단 폴백) ───
+
+/** Google AMP / 캐시 URL 변환 */
+function resolveAmpUrl(url) {
+  const u = String(url).trim();
+  const ampCache = u.match(/https?:\/\/([^/]+)\.cdn\.ampproject\.org\/[cv]\/s\/(.+)/);
+  if (ampCache) return `https://${ampCache[2]}`;
+  return u;
+}
+
+function isRedditUrl(url) { return /reddit\.com\//i.test(url); }
+function isNotionUrl(url) { return /notion\.(so|site)\//i.test(url); }
+
+const _articleResult = (title, byline, siteName, excerpt, textContent, url, layers) => ({
+  title: title || "", byline: byline || "", siteName: siteName || "",
+  excerpt: excerpt || "", textContent: (textContent || "").slice(0, 15000),
+  length: (textContent || "").length, url, layers,
+});
+
+/**
+ * 1차: Jina Reader API — 프론트엔드 CORS OK, 무료 20RPM, JS 렌더링 지원
+ * 블로그·뉴스·Notion 등 대부분의 페이지에서 최고 품질 추출
+ */
+async function tryJinaReader(url) {
+  try {
+    const res = await _rawFetch(`https://r.jina.ai/${url}`, {
+      headers: { "Accept": "application/json" },
+    }, 25_000);
+    if (!res.ok) return null;
+    const json = await res.json();
+    const d = json.data || json;
+    const content = d.content || d.text || "";
+    if (content.length < 50) return null;
+    LOG.info(`Jina Reader success: ${content.length} chars`);
+    return _articleResult(
+      d.title, d.author || "", d.siteName || "",
+      d.description || "", content, url, ["jina"],
+    );
+  } catch (err) {
+    LOG.warn(`Jina Reader failed: ${err?.message}`);
+    return null;
+  }
+}
+
+/**
+ * 2차: Microlink API — 구조화된 메타데이터 + 본문 추출
+ */
+async function tryMicrolink(url) {
+  try {
+    const res = await _rawFetch(
+      `https://api.microlink.io?url=${encodeURIComponent(url)}&filter=title,description,author,publisher,lang,content`,
+      {}, 20_000,
+    );
+    if (!res.ok) return null;
+    const json = await res.json();
+    if (json.status !== "success" || !json.data) return null;
+    const d = json.data;
+    // Microlink content (HTML) → 텍스트 변환
+    let text = "";
+    if (d.content) {
+      const tmpDoc = new DOMParser().parseFromString(d.content, "text/html");
+      text = (tmpDoc.body?.innerText || tmpDoc.body?.textContent || "").replace(/\s+/g, " ").trim();
+    }
+    if (text.length < 50 && (!d.description || d.description.length < 30)) return null;
+    LOG.info(`Microlink success: ${text.length} chars`);
+    return _articleResult(
+      d.title, d.author || "", d.publisher || "",
+      d.description || "", text || d.description || "", url, ["microlink"],
+    );
+  } catch (err) {
+    LOG.warn(`Microlink failed: ${err?.message}`);
+    return null;
+  }
+}
+
+/**
+ * 3차-a: Reddit JSON trick — Reddit URL에 .json 추가하여 본문 추출
+ */
+async function tryRedditJson(url) {
+  if (!isRedditUrl(url)) return null;
+  try {
+    const jsonUrl = url.replace(/\/?(\?.*)?$/, ".json$1");
+    const res = await _rawFetch(jsonUrl, {
+      headers: { "User-Agent": "BrainstormArena/1.0" },
+    }, 15_000);
+    if (!res.ok) return null;
+    const json = await res.json();
+    const listing = Array.isArray(json) ? json[0] : json;
+    const post = listing?.data?.children?.[0]?.data;
+    if (!post) return null;
+    const parts = [];
+    if (post.title) parts.push(`# ${post.title}`);
+    if (post.selftext) parts.push(post.selftext);
+    // 댓글 수집 (상위 5개)
+    const comments = Array.isArray(json) && json[1]?.data?.children;
+    if (comments) {
+      const topComments = comments.slice(0, 5).map(c => c?.data?.body).filter(Boolean);
+      if (topComments.length) parts.push("\n---\n### 주요 댓글\n" + topComments.join("\n\n"));
+    }
+    const text = parts.join("\n\n");
+    if (text.length < 30) return null;
+    LOG.info(`Reddit JSON success: ${text.length} chars`);
+    return _articleResult(
+      post.title, post.author || "", `r/${post.subreddit || "reddit"}`,
+      post.selftext?.slice(0, 200) || "", text, url, ["reddit_json"],
+    );
+  } catch (err) {
+    LOG.warn(`Reddit JSON failed: ${err?.message}`);
+    return null;
+  }
+}
+
+/**
+ * 3차-b: CORS 프록시 + Readability.js 폴백
+ */
+const WEB_EXTRACT_PROXIES = [
+  (u) => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`,
+  (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
+  (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
+];
+
+async function tryProxyReadability(url) {
+  let html = "";
+  for (const mkProxy of WEB_EXTRACT_PROXIES) {
+    try {
+      const res = await _rawFetch(mkProxy(url), {}, 20_000);
+      if (!res.ok) continue;
+      const { data, text } = await readResponsePayload(res);
+      if (data && typeof data === "object") {
+        html = typeof data.contents === "string" ? data.contents : typeof data.data === "string" ? data.data : "";
+      } else {
+        html = typeof data === "string" ? data : text || "";
+      }
+      if (html.length > 200) break;
+    } catch (err) {
+      LOG.warn(`extractWebArticle proxy failed: ${err?.message}`);
+    }
+  }
+  if (!html || html.length < 200) return null;
+
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  try { const base = doc.createElement("base"); base.href = url; doc.head.prepend(base); } catch {}
+
+  // Readability.js 시도
+  try {
+    const reader = new Readability(doc, { charThreshold: 50, nbTopCandidates: 10 });
+    const article = reader.parse();
+    if (article?.textContent && article.textContent.trim().length > 100) {
+      const cleanText = article.textContent.replace(/\s+/g, " ").trim();
+      const ogTitle = html.match(/<meta\s+property="og:title"\s+content="([^"]*)"/i);
+      const ogDesc = html.match(/<meta\s+property="og:description"\s+content="([^"]*)"/i);
+      const ogSite = html.match(/<meta\s+property="og:site_name"\s+content="([^"]*)"/i);
+      LOG.info(`Readability success: ${cleanText.length} chars`);
+      return _articleResult(
+        article.title || (ogTitle ? decodeHtmlEntities(ogTitle[1]) : ""),
+        article.byline || "",
+        article.siteName || (ogSite ? decodeHtmlEntities(ogSite[1]) : ""),
+        article.excerpt || (ogDesc ? decodeHtmlEntities(ogDesc[1]) : ""),
+        cleanText, url, ["proxy", "readability"],
+      );
+    }
+  } catch (err) { LOG.warn(`Readability parse failed: ${err?.message}`); }
+
+  // 수동 추출 폴백
+  doc.querySelectorAll("script,style,nav,footer,header,aside,iframe,noscript,svg,form,button,.ad,.ads,.advertisement,.sidebar,.widget,.comment,.comments,.social,.share,.related,.recommend,#comments,#sidebar,[role=navigation],[role=complementary],[role=banner],[aria-hidden=true]").forEach(el => el.remove());
+  const mainEl = doc.querySelector("article") || doc.querySelector("main") || doc.querySelector('[role="main"]') || doc.querySelector(".post-content,.entry-content,.article-content,.article-body,.post-body,.blog-post,.content-body");
+  const text = ((mainEl || doc.body)?.innerText || (mainEl || doc.body)?.textContent || "").replace(/\s+/g, " ").trim();
+  const ogTitle = html.match(/<meta\s+property="og:title"\s+content="([^"]*)"/i);
+  const ogDesc = html.match(/<meta\s+property="og:description"\s+content="([^"]*)"/i);
+  const ogSite = html.match(/<meta\s+property="og:site_name"\s+content="([^"]*)"/i);
+  const pgTitle = html.match(/<title>([^<]*)<\/title>/i);
+  if (text.length < 50) return null;
+  LOG.info(`Manual extract: ${text.length} chars`);
+  return _articleResult(
+    ogTitle ? decodeHtmlEntities(ogTitle[1]) : (pgTitle ? decodeHtmlEntities(pgTitle[1]) : ""),
+    "", ogSite ? decodeHtmlEntities(ogSite[1]) : "",
+    ogDesc ? decodeHtmlEntities(ogDesc[1]) : "",
+    text, url, ["proxy", "manual"],
+  );
+}
+
+/**
+ * 웹 페이지 본문 추출 통합 함수
+ * 전략: Jina Reader → Microlink → Reddit JSON → CORS+Readability (4단 폴백)
+ * @returns {{ title, byline, siteName, excerpt, textContent, length, url, layers }}
+ */
+export async function extractWebArticle(url) {
+  const resolved = resolveAmpUrl(url);
+
+  // Reddit 전용 빠른 경로
+  if (isRedditUrl(resolved)) {
+    const reddit = await tryRedditJson(resolved);
+    if (reddit) return reddit;
+    // Reddit JSON 실패 시 Jina (Reddit가 차단할 수 있음)
+  }
+
+  // 1차: Jina Reader (최고 품질, JS 렌더링 지원)
+  const jina = await tryJinaReader(resolved);
+  if (jina && jina.textContent.length >= 100) return jina;
+
+  // 2차: Microlink (구조화된 메타데이터)
+  const micro = await tryMicrolink(resolved);
+  if (micro && micro.textContent.length >= 100) return micro;
+
+  // 3차: CORS 프록시 + Readability.js
+  const readability = await tryProxyReadability(resolved);
+  if (readability) return readability;
+
+  // 전체 실패: 가장 풍부한 부분 결과 합성
+  const best = [jina, micro].find(r => r && (r.title || r.textContent));
+  if (best) return best;
+
+  return _articleResult("", "", "", "", "", resolved, ["fail"]);
+}
+
+// ─── Invidious / Piped 공개 인스턴스 (자막 + 메타데이터) ───
+const INVIDIOUS_INSTANCES = [
+  "https://inv.nadeko.net",
+  "https://invidious.nerdvpn.de",
+  "https://invidious.jing.rocks",
+  "https://iv.datura.network",
+  "https://invidious.protokols.io",
+];
+
+const PIPED_INSTANCES = [
+  "https://pipedapi.kavin.rocks",
+  "https://pipedapi.adminforge.de",
+  "https://api.piped.projectsegfault.com",
+];
+
+function decodeHtmlEntities(s) {
+  return String(s || "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&#x2F;/g, "/").replace(/\\n/g, "\n");
+}
+
+function cleanCaptionXml(xml) {
+  return String(xml || "").replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/\s+/g, " ").trim();
+}
+
+/** Invidious API: 영상 메타데이터 + 자막 텍스트 추출 */
+async function tryInvidiousExtract(videoId) {
+  for (const inst of INVIDIOUS_INSTANCES) {
+    try {
+      const res = await _rawFetch(`${inst}/api/v1/videos/${videoId}?fields=title,author,description,descriptionHtml,keywords,lengthSeconds,captions`, {}, 12_000);
+      if (!res.ok) continue;
+      const d = await res.json();
+      const info = {
+        title: d.title || "",
+        author: d.author || "",
+        description: decodeHtmlEntities(d.description || d.descriptionHtml || ""),
+        keywords: Array.isArray(d.keywords) ? d.keywords.join(", ") : "",
+        captionText: "",
+        layers: ["invidious"],
+      };
+      // 자막 추출 시도
+      const captions = d.captions || [];
+      const koTrack = captions.find(c => /^ko/i.test(c.language_code || c.languageCode || ""));
+      const defaultTrack = captions.find(c => /^(ko|en|ja)/i.test(c.language_code || c.languageCode || "")) || captions[0];
+      const captionTrack = koTrack || defaultTrack;
+      if (captionTrack) {
+        const capLabel = captionTrack.label || captionTrack.language_code || "";
+        const capUrl = captionTrack.url || captionTrack.baseUrl || "";
+        if (capUrl) {
+          try {
+            const fullUrl = capUrl.startsWith("http") ? capUrl : `${inst}${capUrl}`;
+            const capRes = await _rawFetch(fullUrl, {}, 10_000);
+            if (capRes.ok) {
+              const capText = cleanCaptionXml(await capRes.text());
+              if (capText.length > 50) { info.captionText = capText; info.layers.push("captions"); }
+            }
+          } catch {}
+        }
+      }
+      if (info.title) return info;
+    } catch (err) { LOG.warn(`Invidious ${inst} failed: ${err?.message}`); }
+  }
+  return null;
+}
+
+/** Piped API: 영상 메타데이터 + 자막 추출 */
+async function tryPipedExtract(videoId) {
+  for (const inst of PIPED_INSTANCES) {
+    try {
+      const res = await _rawFetch(`${inst}/streams/${videoId}`, {}, 12_000);
+      if (!res.ok) continue;
+      const d = await res.json();
+      const info = {
+        title: d.title || "",
+        author: d.uploader || d.uploaderName || "",
+        description: decodeHtmlEntities(d.description || ""),
+        keywords: "",
+        captionText: "",
+        layers: ["piped"],
+      };
+      // Piped 자막
+      const subs = d.subtitles || [];
+      const koSub = subs.find(s => /^ko/i.test(s.code || ""));
+      const defaultSub = subs.find(s => /^(ko|en|ja)/i.test(s.code || "")) || subs[0];
+      const sub = koSub || defaultSub;
+      if (sub?.url) {
+        try {
+          const capRes = await _rawFetch(sub.url, {}, 10_000);
+          if (capRes.ok) {
+            const raw = await capRes.text();
+            // VTT 또는 XML 파싱
+            const capText = raw.includes("WEBVTT")
+              ? raw.replace(/WEBVTT[\s\S]*?\n\n/, "").replace(/\d{2}:\d{2}[\d:.→\->]+\n/g, "").replace(/<[^>]+>/g, "").replace(/\n+/g, " ").trim()
+              : cleanCaptionXml(raw);
+            if (capText.length > 50) { info.captionText = capText; info.layers.push("captions"); }
+          }
+        } catch {}
+      }
+      if (info.title) return info;
+    } catch (err) { LOG.warn(`Piped ${inst} failed: ${err?.message}`); }
+  }
+  return null;
+}
+
+/** YouTube HTML에서 초기 데이터 JSON (ytInitialData / ytInitialPlayerResponse) 추출 */
+function extractYtInitialData(html) {
+  const result = { title: "", author: "", description: "", captionText: "", layers: [] };
+  try {
+    // ytInitialPlayerResponse에서 제목·설명·자막 URL 추출
+    const playerMatch = html.match(/var\s+ytInitialPlayerResponse\s*=\s*(\{[\s\S]*?\});\s*(?:var|<\/script)/);
+    if (playerMatch) {
+      try {
+        const p = JSON.parse(playerMatch[1]);
+        const vd = p?.videoDetails || {};
+        result.title = vd.title || "";
+        result.author = vd.author || "";
+        result.description = vd.shortDescription || "";
+        if (result.title) result.layers.push("ytPlayer");
+        // 자막 트랙
+        const tracks = p?.captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
+        const koTrack = tracks.find(t => /^ko/i.test(t.languageCode || ""));
+        const pick = koTrack || tracks.find(t => /^(en|ja)/i.test(t.languageCode || "")) || tracks[0];
+        if (pick?.baseUrl) {
+          result._captionUrl = pick.baseUrl.replace(/\\u0026/g, "&").replace(/\\"/g, '"');
+        }
+      } catch {}
+    }
+    // ytInitialData에서 description 보완
+    if (!result.description) {
+      const dataMatch = html.match(/var\s+ytInitialData\s*=\s*(\{[\s\S]*?\});\s*(?:var|<\/script)/);
+      if (dataMatch) {
+        try {
+          const d = JSON.parse(dataMatch[1]);
+          const desc = JSON.stringify(d).match(/"description":\{"simpleText":"((?:[^"\\]|\\.)*)"/);
+          if (desc) result.description = decodeHtmlEntities(desc[1]);
+        } catch {}
+      }
+    }
+    // og:description 폴백
+    if (!result.description) {
+      const ogDesc = html.match(/<meta\s+property="og:description"\s+content="([^"]*)"/i)
+        || html.match(/<meta\s+name="description"\s+content="([^"]*)"/i);
+      if (ogDesc) result.description = decodeHtmlEntities(ogDesc[1]);
+    }
+    if (!result.title) {
+      const ogTitle = html.match(/<meta\s+property="og:title"\s+content="([^"]*)"/i)
+        || html.match(/<title>([^<]*)<\/title>/i);
+      if (ogTitle) result.title = decodeHtmlEntities(ogTitle[1]);
+    }
+  } catch {}
+  return result;
+}
+
+/** YouTube HTML + CORS 프록시 전략 (기존 방식 강화) */
+async function tryYouTubeHtmlExtract(videoId) {
+  try {
+    const html = await fetchViaProxy(`https://www.youtube.com/watch?v=${videoId}`);
+    if (!html || html.length < 500) return null;
+    const info = extractYtInitialData(html);
+    // 자막 URL이 추출되었으면 프록시로 가져오기
+    if (info._captionUrl) {
+      try {
+        const capXml = await fetchViaProxy(info._captionUrl);
+        const capText = cleanCaptionXml(capXml);
+        if (capText.length > 50) { info.captionText = capText; info.layers.push("captions"); }
+      } catch {}
+    }
+    // _captionUrl 필드를 지우고 반환
+    delete info._captionUrl;
+    if (info.title || info.description) {
+      if (!info.layers.includes("ytPlayer")) info.layers.push("ytHtml");
+      return info;
+    }
+  } catch (err) { LOG.warn(`YouTube HTML extract failed: ${err?.message}`); }
+  return null;
+}
+
+/** noembed 기본 메타데이터 (최소 폴백) */
+async function tryNoembedExtract(videoId) {
+  try {
+    const res = await fetch(`https://noembed.com/embed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${videoId}`)}`);
+    if (!res.ok) return null;
+    const d = await res.json();
+    if (d.title) return { title: d.title || "", author: d.author_name || "", description: "", keywords: "", captionText: "", layers: ["noembed"] };
+  } catch {}
+  return null;
+}
+
+/**
+ * YouTube 영상 정보 + 자막 통합 추출
+ * 전략: Invidious → Piped → YouTube HTML → noembed (다중 폴백)
+ */
 export async function extractYouTubeVideoInfo(url) {
   const videoId = extractYouTubeVideoId(url);
   if (!videoId) throw new Error("유효한 YouTube/영상 URL이 아닙니다.");
-  let title = "", author = "", description = "", captionText = "";
-  const layers = [];
-  try {
-    const res = await fetch(`https://noembed.com/embed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${videoId}`)}`);
-    if (res.ok) { const d = await res.json(); title = d.title || ""; author = d.author_name || ""; layers.push("metadata"); }
-  } catch {}
-  try {
-    const html = await fetchViaProxy(`https://www.youtube.com/watch?v=${videoId}`);
-    const descMeta = html.match(/<meta\s+name="description"\s+content="([^"]*)"/i) || html.match(/<meta\s+property="og:description"\s+content="([^"]*)"/i);
-    if (descMeta) { description = descMeta[1].replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#39;/g, "'").replace(/&quot;/g, '"'); layers.push("description"); }
-    if (!title) { const titleMeta = html.match(/<meta\s+name="title"\s+content="([^"]*)"/i) || html.match(/<title>([^<]*)<\/title>/i); if (titleMeta) title = titleMeta[1]; }
-    const captionMatch = html.match(/"captionTracks":\s*\[(.*?)\]/);
-    if (captionMatch) {
-      const urlMatch = captionMatch[1].match(/"baseUrl"\s*:\s*"(.*?)"/);
-      if (urlMatch) {
-        const captionUrl = urlMatch[1].replace(/\\u0026/g, "&").replace(/\\"/g, '"');
-        try { const capXml = await fetchViaProxy(captionUrl); captionText = capXml.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, " ").trim(); if (captionText.length > 50) layers.push("captions"); } catch {}
-      }
-    }
-    if (!captionText) {
-      const timedTextMatch = html.match(/"playerCaptionsTracklistRenderer".*?"baseUrl"\s*:\s*"(.*?)"/);
-      if (timedTextMatch) {
-        const ttUrl = timedTextMatch[1].replace(/\\u0026/g, "&").replace(/\\"/g, '"');
-        try { const capXml = await fetchViaProxy(ttUrl); captionText = capXml.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/\s+/g, " ").trim(); if (captionText.length > 50) layers.push("captions_alt"); } catch {}
-      }
-    }
-  } catch {}
-  return { videoId, title, author, description, captionText: captionText.slice(0, 15000), layers };
+
+  // 1차: Invidious (가장 풍부한 데이터 + 자막)
+  const inv = await tryInvidiousExtract(videoId);
+  if (inv && (inv.captionText || inv.description)) {
+    LOG.info(`YouTube extract via Invidious: layers=${inv.layers.join(",")}`);
+    return { videoId, ...inv, captionText: (inv.captionText || "").slice(0, 15000) };
+  }
+
+  // 2차: Piped (대체 프론트엔드)
+  const piped = await tryPipedExtract(videoId);
+  if (piped && (piped.captionText || piped.description)) {
+    LOG.info(`YouTube extract via Piped: layers=${piped.layers.join(",")}`);
+    return { videoId, ...piped, captionText: (piped.captionText || "").slice(0, 15000) };
+  }
+
+  // 3차: YouTube HTML 직접 파싱 (CORS 프록시)
+  const yt = await tryYouTubeHtmlExtract(videoId);
+  if (yt && (yt.captionText || yt.description)) {
+    LOG.info(`YouTube extract via HTML: layers=${yt.layers.join(",")}`);
+    return { videoId, ...yt, captionText: (yt.captionText || "").slice(0, 15000) };
+  }
+
+  // 4차: noembed 최소 메타
+  const noembed = await tryNoembedExtract(videoId);
+
+  // 가장 풍부한 결과 합성
+  const merged = { videoId, title: "", author: "", description: "", keywords: "", captionText: "", layers: [] };
+  for (const src of [inv, piped, yt, noembed]) {
+    if (!src) continue;
+    if (!merged.title && src.title) merged.title = src.title;
+    if (!merged.author && src.author) merged.author = src.author;
+    if (!merged.description && src.description) merged.description = src.description;
+    if (!merged.keywords && src.keywords) merged.keywords = src.keywords;
+    if (!merged.captionText && src.captionText) merged.captionText = src.captionText;
+    merged.layers.push(...(src.layers || []));
+  }
+  merged.captionText = merged.captionText.slice(0, 15000);
+  LOG.info(`YouTube extract merged: layers=${merged.layers.join(",")}, title=${!!merged.title}, desc=${!!merged.description}, cap=${merged.captionText.length}`);
+  return merged;
 }
 
 // ─── Report Section Generator ───

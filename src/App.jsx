@@ -2,7 +2,7 @@ import { useState, useEffect, createContext, useContext, useCallback, useRef, us
 import ReactDOM from "react-dom";
 import L from "leaflet";
 import { MapContainer, TileLayer, CircleMarker, Tooltip, useMap } from "react-leaflet";
-import "leaflet/dist/leaflet.css";
+// import "leaflet/dist/leaflet.css"; // Moved to index.html to avoid build issues
 
 // ─── Module Imports ───
 import { LOG } from "./logger.js";
@@ -31,7 +31,7 @@ import {
 import {
   callAI, callAIStream, showAppToast, useAppToasts,
   parseDocumentFile, fileToBase64, processImageWithVision,
-  extractYouTubeVideoId, extractYouTubeVideoInfo, fetchViaProxy, safeParseJsonText,
+  extractYouTubeVideoId, extractYouTubeVideoInfo, fetchViaProxy, extractWebArticle, safeParseJsonText,
   generateReportSection, generateReportSectionStream,
   parseIdeasLinesFromText, safeParseIdeasJson, generateTournamentSlotIdeas,
 } from "./api.js";
@@ -57,7 +57,7 @@ import {
 import { STYLES } from "./styles.js";
 
 // ─── 앱 업데이트 시점 (코드 수정 시 반드시 갱신) ───
-const LAST_UPDATED = "2026-04-04 22:39 KST";
+const LAST_UPDATED = "2026-04-05 11:49 KST";
 
 const MODE_TAGLINES = {
   tournament: [
@@ -390,12 +390,50 @@ function TargetBar() {
 const ArchiveContext = createContext({ save: () => {} });
 function useArchive() { return useContext(ArchiveContext); }
 
+// ─── Viewport / Responsive Hook ───
+const ViewportContext = createContext({ isDesktop: false, isMobile: true, width: 375 });
+function useViewport() { return useContext(ViewportContext); }
+function ViewportProvider({ children }) {
+  const [state, setState] = useState(() => {
+    const w = typeof window !== "undefined" ? window.innerWidth : 375;
+    return { isDesktop: w >= 1024, isMobile: w < 640, width: w };
+  });
+  useEffect(() => {
+    let raf;
+    const update = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const w = window.innerWidth;
+        setState(prev => {
+          const isDesktop = w >= 1024, isMobile = w < 640;
+          if (prev.isDesktop === isDesktop && prev.isMobile === isMobile && prev.width === w) return prev;
+          return { isDesktop, isMobile, width: w };
+        });
+      });
+    };
+    window.addEventListener("resize", update);
+    return () => { window.removeEventListener("resize", update); cancelAnimationFrame(raf); };
+  }, []);
+  return <ViewportContext.Provider value={state}>{children}</ViewportContext.Provider>;
+}
+
+// ─── Addon/FactCheck result cache (persists across views within session) ───
+const _addonCache = {};
+function setAddonCache(idea, results) { if (idea) _addonCache[idea] = { ...(_addonCache[idea] || {}), ...results }; }
+function getAddonCache(idea) { return _addonCache[idea] || {}; }
+
 function SaveToArchiveBtn({ modeId, title, payload }) {
   const { save } = useArchive();
   const meta = MODES.find(m => m.id === modeId);
+  const handleSave = () => {
+    const idea = payload?.idea || payload?.input || payload?.ideasText || payload?.combined_concept || title || "";
+    const cached = getAddonCache(idea);
+    const enriched = (cached && Object.keys(cached).length > 0) ? { ...payload, _addons: cached } : payload;
+    save({ modeId, modeName: meta?.name || "분석", modeIcon: meta?.icon || "📌", title, payload: enriched });
+  };
   return (
     <button type="button" className="idea-stack-btn" style={{ padding: "8px 14px", fontSize: 12, marginTop: 12 }}
-      onClick={() => save({ modeId, modeName: meta?.name || "분석", modeIcon: meta?.icon || "📌", title, payload })}>
+      onClick={handleSave}>
       📦 아카이브 저장
     </button>
   );
@@ -825,22 +863,55 @@ function HistoryDetailBody({ entry, personas }) {
 
   if (modeId === "scamper") {
     const { idea, fb, results = {} } = payload;
+    const scamperAxColors = ["#3182f6", "#7c3aed", "#059669", "#d97706", "#ec4899", "#dc2626", "#0891b2"];
+    const scamperHeader = (
+      <>
+        <div className="s-label">원본 아이디어</div>
+        <div className="r-card" style={{ marginBottom: 14 }}><RichText text={idea || ""} /></div>
+        {fb ? (<><div className="s-label">원하는 피드백 방향</div><div className="r-card" style={{ marginBottom: 14 }}><RichText text={fb} /></div></>) : null}
+      </>
+    );
     if (results.__full) {
       return (
         <div>
-          <div className="s-label">원본 아이디어</div>
-          <div className="r-card" style={{ marginBottom: 14 }}><RichText text={idea || ""} /></div>
-          {fb ? (<><div className="s-label">원하는 피드백 방향</div><div className="r-card" style={{ marginBottom: 14 }}><RichText text={fb} /></div></>) : null}
-          <div className="r-card"><RichText text={results.__full} /></div>
+          {scamperHeader}
+          <div className="r-card" style={{ borderLeft: "4px solid var(--accent-primary)" }}><div className="r-card-header"><span className="r-card-icon">💡</span><span className="r-card-title">SCAMPER 전체 응답</span></div><RichText text={results.__full} /></div>
         </div>
       );
     }
     return (
       <div>
-        <div className="s-label">원본 아이디어</div>
-        <div className="r-card" style={{ marginBottom: 16 }}><RichText text={idea || ""} /></div>
-        {fb ? (<><div className="s-label">원하는 피드백 방향</div><div className="r-card" style={{ marginBottom: 14 }}><RichText text={fb} /></div></>) : null}
-        <div className="scamper-grid">{SCAMPER_AXES.map((a) => (<div className="scamper-card" key={a.key}><div className="scamper-badge">{a.icon} {a.key} — {a.name}</div><div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 10 }}>{a.desc}</div><RichText text={results[a.key] || ""} /></div>))}</div>
+        {scamperHeader}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
+          <span style={{ fontSize: 22 }}>💡</span>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: "var(--text-primary)", letterSpacing: "-0.03em" }}>SCAMPER 확장 결과</div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>7개 혁신 축 × 실전 비즈니스 전략</div>
+          </div>
+        </div>
+        {SCAMPER_AXES.map((a, idx) => {
+          const c = scamperAxColors[idx];
+          const text = results[a.key] || "";
+          if (!text.trim()) return null;
+          return (
+            <div key={a.key} className="r-card" style={{ marginBottom: 14, borderLeft: `4px solid ${c}`, position: "relative", overflow: "hidden" }}>
+              <div style={{ position: "absolute", top: 0, right: 0, width: 90, height: 90, background: `radial-gradient(circle at 100% 0%, ${c}10, transparent 70%)`, pointerEvents: "none" }} />
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                <span style={{ width: 36, height: 36, borderRadius: 10, background: `${c}12`, border: `1px solid ${c}25`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>{a.icon}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 12, fontWeight: 800, color: "#fff", background: c, padding: "2px 10px", borderRadius: 8, letterSpacing: "0.03em" }}>{a.key}</span>
+                    <span style={{ fontSize: 15, fontWeight: 800, color: "var(--text-primary)", letterSpacing: "-0.03em" }}>{a.name}</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{a.desc}</div>
+                </div>
+              </div>
+              <div style={{ padding: "12px 14px", borderRadius: 10, background: "var(--bg-surface-2)", border: "1px solid var(--glass-border)" }}>
+                <RichText text={text} />
+              </div>
+            </div>
+          );
+        })}
       </div>
     );
   }
@@ -1005,6 +1076,33 @@ function HistoryDetailBody({ entry, personas }) {
   return (
     <div className="r-card">
       <pre style={{ fontSize: 12, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{JSON.stringify(payload, null, 2)}</pre>
+    </div>
+  );
+}
+
+function SavedAddonsDisplay({ payload }) {
+  const addons = payload?._addons;
+  if (!addons || typeof addons !== "object" || Object.keys(addons).length === 0) return null;
+  const addonMeta = {};
+  (typeof REPORT_ADDONS !== "undefined" ? REPORT_ADDONS : []).forEach(a => { addonMeta[a.key] = a; });
+  return (
+    <div style={{ marginTop: 16 }}>
+      <div className="s-label" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <span style={{ fontSize: 12 }}>📎</span> 저장된 추가 분석 결과
+      </div>
+      {Object.entries(addons).map(([key, text]) => {
+        if (!text || typeof text !== "string" || text.startsWith("오류:")) return null;
+        const meta = addonMeta[key];
+        return (
+          <div key={key} className="r-card" style={{ marginTop: 8, borderLeft: "3px solid var(--accent-primary)" }}>
+            <div className="r-card-header">
+              <span className="r-card-icon">{meta?.icon || "📄"}</span>
+              <span className="r-card-title">{meta?.label || key}</span>
+            </div>
+            <RichText text={text} />
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1186,6 +1284,7 @@ function HistoryDetailModal({ entry, onClose, personas, globalKey }) {
         </div>
         <div className="history-detail-scroll">
           <HistoryDetailBody entry={entry} personas={personas} />
+          <SavedAddonsDisplay payload={entry.payload} />
         </div>
         <div className="history-detail-footer">
           <div className="history-detail-footer-inner">
@@ -1883,31 +1982,37 @@ function IdeaStackPopover({ onSelect, onClose, personas, globalKey, utilProvider
     const persona = getPersona();
     if (!persona?.apiKey) { showAppToast("🔑 영상 분석을 위해 API 키가 필요합니다. ⚙️ 설정 → 유틸리티 API 키를 입력해 주세요.", "error", 5000); return; }
     setVideoLoading(true);
-    setVideoStatus("🎬 영상 메타데이터 수집 중...");
+    setVideoStatus("🎬 영상 정보 수집 중… (Invidious → Piped → YouTube 순)");
     try {
       const info = await extractYouTubeVideoInfo(url);
       const hasCaption = info.captionText && info.captionText.length > 50;
-      const hasMeta = info.title || info.description;
+      const hasDesc = info.description && info.description.length > 20;
+      const hasMeta = info.title || hasDesc;
       if (!hasMeta && !hasCaption) throw new Error("영상 정보를 수집할 수 없습니다. URL을 확인해 주세요.");
 
-      setVideoStatus(hasCaption ? "🤖 자막 기반 AI 분석 중..." : "🤖 메타데이터 기반 AI 분석 중...");
+      const layerLabel = hasCaption ? "자막+메타데이터" : hasDesc ? "설명 기반" : "제목 기반";
+      setVideoStatus(`🤖 ${layerLabel} AI 분석 중...`);
 
       const contextParts = [];
       if (info.title) contextParts.push(`제목: ${info.title}`);
       if (info.author) contextParts.push(`채널: ${info.author}`);
-      if (info.description) contextParts.push(`설명: ${info.description}`);
-      if (hasCaption) contextParts.push(`\n--- 자막 텍스트 (음성 기반) ---\n${info.captionText}`);
+      if (info.keywords) contextParts.push(`태그: ${info.keywords}`);
+      if (info.description) contextParts.push(`설명:\n${info.description}`);
+      if (hasCaption) contextParts.push(`\n--- 자막 전문 (음성 기반, ${(info.captionText.length / 1000).toFixed(1)}k자) ---\n${info.captionText}`);
 
       const prompt = hasCaption
-        ? `아래는 YouTube 영상에서 추출한 자막(음성 텍스트)과 메타데이터입니다.\n\n${contextParts.join("\n")}\n\n위 영상의 핵심 내용을 분석하고, 이 영상에서 영감을 받아 만들 수 있는 비즈니스 아이디어를 5개 이상 한국어로 정리해 주세요. 각 아이디어는 한 줄로 구체적으로 작성하세요.`
-        : `아래는 YouTube 영상의 메타데이터입니다.\n\n${contextParts.join("\n")}\n\n이 영상의 주제를 바탕으로, 관련 비즈니스 아이디어를 5개 이상 한국어로 정리해 주세요. 각 아이디어는 한 줄로 구체적으로 작성하세요.`;
+        ? `아래는 YouTube 영상에서 추출한 **자막 전문**(음성 텍스트)과 메타데이터입니다.\n\n${contextParts.join("\n")}\n\n위 영상의 **핵심 내용을 3~5문장으로 요약**하고, 이 영상에서 영감을 받아 만들 수 있는 **실행 가능한 비즈니스 아이디어를 8개 이상** 한국어로 정리해 주세요.\n각 아이디어는 ① 구체적 서비스/제품 형태 ② 타겟 고객 ③ 수익 모델을 한 줄에 포함하세요.`
+        : hasDesc
+        ? `아래는 YouTube 영상의 제목·설명·태그 정보입니다.\n\n${contextParts.join("\n")}\n\n이 영상의 **주제와 핵심 메시지를 분석**하고, 관련 **실행 가능한 비즈니스 아이디어를 8개 이상** 한국어로 정리해 주세요.\n각 아이디어는 ① 구체적 서비스/제품 형태 ② 타겟 고객 ③ 수익 모델을 한 줄에 포함하세요.`
+        : `아래는 YouTube 영상의 기본 정보입니다.\n\n${contextParts.join("\n")}\n\n이 영상의 주제를 바탕으로, 관련 **비즈니스 아이디어를 8개 이상** 한국어로 정리해 주세요.\n각 아이디어는 구체적으로 한 줄씩 작성하세요.`;
 
       const result = await callAI(persona, [{ role: "user", content: prompt }]);
-      const header = `[📹 ${info.title || "영상 분석"}${info.author ? ` · ${info.author}` : ""}]\n${hasCaption ? "(자막 기반)" : "(메타데이터 기반)"}\n\n`;
+      const srcLabel = hasCaption ? `자막 기반 · ${(info.captionText.length / 1000).toFixed(1)}k자 분석` : hasDesc ? "설명 기반 분석" : "메타데이터 기반";
+      const header = `[📹 ${info.title || url}${info.author ? ` · ${info.author}` : ""}]\n(${srcLabel} · ${info.layers.join("+")})\n\n`;
       onSelect(header + result);
       setVideoUrl("");
     } catch (err) {
-      alert(`영상 분석 실패: ${err.message}`);
+      showAppToast(`영상 분석 실패: ${err.message}`, "error", 5000);
     } finally {
       setVideoStatus("");
       setVideoLoading(false);
@@ -1920,21 +2025,32 @@ function IdeaStackPopover({ onSelect, onClose, personas, globalKey, utilProvider
     const persona = getPersona();
     if (!persona?.apiKey) { showAppToast("🔑 웹 분석을 위해 API 키가 필요합니다. ⚙️ 설정에서 API 키를 입력해 주세요.", "error", 5000); return; }
     setWebLoading(true);
-    setWebStatus("🌐 웹 페이지 수집 중...");
+    setWebStatus("🌐 웹 본문 추출 중… (Jina Reader → Microlink → Readability)");
     try {
-      let text = "";
-      try {
-        const html = await fetchViaProxy(url);
-        const doc = new DOMParser().parseFromString(html, "text/html");
-        doc.querySelectorAll("script,style,nav,footer,header,aside,iframe,noscript,svg").forEach(el => el.remove());
-        text = (doc.body?.innerText || doc.body?.textContent || "").replace(/\s+/g, " ").trim().slice(0, 8000);
-      } catch { text = ""; }
-      setWebStatus("🤖 AI 분석 중...");
-      const prompt = text.length >= 30
-        ? `아래는 웹 페이지에서 추출한 텍스트입니다.\n\nURL: ${url}\n\n---\n${text}\n---\n\n위 내용의 핵심을 요약하고, 이 내용에서 영감을 받아 만들 수 있는 비즈니스 아이디어나 핵심 인사이트를 한국어로 정리해 주세요.`
-        : `아래 URL의 웹 페이지를 분석해주세요. CORS 제한으로 텍스트를 직접 추출하지 못했지만, URL에서 유추할 수 있는 서비스/콘텐츠의 성격을 바탕으로 관련 비즈니스 아이디어나 핵심 인사이트를 한국어로 정리해 주세요.\n\nURL: ${url}`;
+      const article = await extractWebArticle(url);
+      const hasContent = article.textContent && article.textContent.length >= 50;
+      const hasTitle = !!article.title;
+
+      if (!hasContent && !hasTitle) throw new Error("웹 페이지에서 텍스트를 추출할 수 없습니다. URL을 확인해 주세요.");
+
+      const charK = (article.length / 1000).toFixed(1);
+      setWebStatus(`🤖 본문 ${charK}k자 AI 분석 중...`);
+
+      const contextParts = [];
+      if (article.title) contextParts.push(`제목: ${article.title}`);
+      if (article.siteName) contextParts.push(`사이트: ${article.siteName}`);
+      if (article.byline) contextParts.push(`작성자: ${article.byline}`);
+      if (article.excerpt) contextParts.push(`요약: ${article.excerpt}`);
+      if (hasContent) contextParts.push(`\n--- 본문 텍스트 (${charK}k자) ---\n${article.textContent}`);
+
+      const prompt = hasContent
+        ? `아래는 웹 페이지에서 추출한 **본문 텍스트**입니다.\n\n${contextParts.join("\n")}\n\nURL: ${url}\n\n위 글의 **핵심 내용을 3~5문장으로 요약**하고, 이 내용에서 영감을 받아 만들 수 있는 **실행 가능한 비즈니스 아이디어를 8개 이상** 한국어로 정리해 주세요.\n각 아이디어는 ① 구체적 서비스/제품 형태 ② 타겟 고객 ③ 수익 모델을 한 줄에 포함하세요.`
+        : `아래는 웹 페이지의 기본 정보입니다.\n\n${contextParts.join("\n")}\n\nURL: ${url}\n\n위 정보를 바탕으로 관련 **비즈니스 아이디어를 8개 이상** 한국어로 정리해 주세요.\n각 아이디어는 구체적으로 한 줄씩 작성하세요.`;
+
       const result = await callAI(persona, [{ role: "user", content: prompt }]);
-      onSelect(`[🌐 ${url}]\n\n${result}`);
+      const srcLabel = hasContent ? `본문 ${charK}k자 추출` : "메타데이터 기반";
+      const header = `[🌐 ${article.title || url}${article.siteName ? ` · ${article.siteName}` : ""}]\n(${srcLabel} · ${article.layers.join("+")})\n\n`;
+      onSelect(header + result);
       setWebUrl("");
     } catch (err) {
       showAppToast(`웹 페이지 분석 실패: ${err.message}`, "error", 5000);
@@ -2369,15 +2485,24 @@ function Tournament({ personas, globalKey, utilProvider, utilModel, utilApiKey, 
         </>
       )}
 
-      {phase === "filling" && (
-        <div style={{ textAlign: "center", padding: "60px 0" }}>
-          <div style={{ fontSize: 52, marginBottom: 16, animation: "fiu 0.6s cubic-bezier(0.33,1,0.68,1)" }}>🤖</div>
-          <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", marginBottom: 8 }}>AI가 아이디어를 보충하고 있어요</div>
-          <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 4 }}>{uids.length}개 → 32개 확보 후 <strong>랜덤 셔플</strong></div>
-          <div style={{ marginTop: 24 }}><span className="spinner" style={{ width: 26, height: 26, borderTopColor: "var(--accent-primary)", borderWidth: 3 }} /></div>
-          <QuoteRoller />
-        </div>
-      )}
+      {phase === "filling" && (() => {
+        const targetN = mode === "full32" ? 32 : mode === "concept" ? conceptCount : uids.length;
+        const roundName = targetN >= 32 ? "32강" : targetN >= 16 ? "16강" : targetN >= 8 ? "8강" : targetN >= 4 ? "4강" : "토너먼트";
+        return (
+          <div style={{ textAlign: "center", padding: "60px 0" }}>
+            <div style={{ fontSize: 52, marginBottom: 16, animation: "fiu 0.6s cubic-bezier(0.33,1,0.68,1)" }}>🤖</div>
+            <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", marginBottom: 8 }}>AI가 아이디어를 {mode === "concept" ? "생성" : "보충"}하고 있어요</div>
+            <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 4 }}>
+              {mode === "concept"
+                ? <>{targetN}개 생성 → <strong>{roundName}</strong> 토너먼트</>
+                : <>{uids.length}개 → {targetN}개 확보 후 <strong>{roundName} 랜덤 셔플</strong></>
+              }
+            </div>
+            <div style={{ marginTop: 24 }}><span className="spinner" style={{ width: 26, height: 26, borderTopColor: "var(--accent-primary)", borderWidth: 3 }} /></div>
+            <QuoteRoller />
+          </div>
+        );
+      })()}
 
       {(phase === "bracket" || phase === "result") && (
         <>
@@ -2664,10 +2789,11 @@ function ScamperMode({ personas, globalKey, utilProvider, utilModel, utilApiKey 
   const { spend } = useCredits();
   const [idea, setIdea] = useState(""); const [fb, setFb] = useState(""); const [results, setResults] = useState({}); const [running, setRunning] = useState(false);
   const [ideaContext, setIdeaContext] = useState("");
+  const [streamText, setStreamText] = useState("");
   const run = async () => {
     if (!idea.trim()) return;
     addLinesToIdeaStack(idea);
-    if (!spend("scamper")) return; notifyStart(); addToFeedbackStack(fb); setRunning(true); setResults({});
+    if (!spend("scamper")) return; notifyStart(); addToFeedbackStack(fb); setRunning(true); setResults({}); setStreamText("");
     const tInfo = formatTargetForPrompt(target);
     let snapshot = {};
     try {
@@ -2680,7 +2806,10 @@ function ScamperMode({ personas, globalKey, utilProvider, utilModel, utilApiKey 
         `반드시 아래 7개 축을 빠짐없이 쓰고, 각 축은 새 줄에서 다음 중 하나 형태로 시작하세요 (대문자 한 글자 S,C,A,M,P,E,R 만):\n` +
         `예: **S - 대체:** 또는 ### S - Substitute\n\n` +
         `${SCAMPER_AXES.map((a) => `### ${a.key} - ${a.name} (${a.desc})`).join("\n")}\n\n한국어로 답하세요.`;
-      const r = await callAI(p, [{ role: "user", content: prompt }]);
+      const r = await callAIStream(p, [{ role: "user", content: prompt }], undefined, (_chunk, full) => {
+        setStreamText(full);
+      }, { maxTokens: 8000 });
+      setStreamText("");
       const parsed = parseScamperResponse(r);
       if (parsed.__full) {
         snapshot = { __full: parsed.__full };
@@ -2704,9 +2833,46 @@ function ScamperMode({ personas, globalKey, utilProvider, utilModel, utilApiKey 
     <IdeaInput value={idea} onChange={setIdea} placeholder="SCAMPER 기법으로 확장할 아이디어를 입력하세요..." style={{ marginBottom: 16 }} minHeight={80} context={ideaContext} onContextChange={setIdeaContext} personas={personas} globalKey={globalKey} utilProvider={utilProvider} utilModel={utilModel} utilApiKey={utilApiKey} />
     <FeedbackField value={fb} onChange={setFb} placeholder="예: B2B 시나리오·구독 모델 위주로 확장해 달라…" style={{ marginBottom: 16 }} />
     <button className="btn-cta" onClick={run} disabled={running || !idea.trim()}>{running ? <><span className="spinner" /> SCAMPER 분석 중<span className="loading-dots" /></> : <>SCAMPER 확장 시작<CreditCostTag costKey="scamper" /></>}</button>
-    {running && <QuoteRoller />}
-    {Object.keys(results).length > 0 && !results.error && !results.__full && (<div className="scamper-grid" style={{ marginTop: 20 }}>{SCAMPER_AXES.map(a => (<div className="scamper-card" key={a.key}><div className="scamper-badge">{a.icon} {a.key} — {a.name}</div><div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 10 }}>{a.desc}</div><RichText text={results[a.key] || ""} /></div>))}</div>)}
-    {results.__full && (<div className="r-card" style={{ marginTop: 20 }}><div className="r-card-header"><span className="r-card-icon">💡</span><span className="r-card-title">SCAMPER 전체 응답</span></div><p style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>섹션 형식이 달라 카드로 나누지 못했습니다. 전체 내용입니다.</p><RichText text={results.__full} /></div>)}
+    {running && streamText && <div style={{ marginTop: 16 }}><StreamingRichText text={streamText} isStreaming={true} variant="synth" /></div>}
+    {running && !streamText && <QuoteRoller />}
+    {Object.keys(results).length > 0 && !results.error && !results.__full && (() => {
+      const axisColors = ["#3182f6", "#7c3aed", "#059669", "#d97706", "#ec4899", "#dc2626", "#0891b2"];
+      return (
+        <div style={{ marginTop: 24 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
+            <span style={{ fontSize: 22 }}>💡</span>
+            <div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: "var(--text-primary)", letterSpacing: "-0.03em" }}>SCAMPER 확장 결과</div>
+              <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>7개 혁신 축 × 실전 비즈니스 전략</div>
+            </div>
+          </div>
+          {SCAMPER_AXES.map((a, idx) => {
+            const c = axisColors[idx];
+            const text = results[a.key] || "";
+            if (!text.trim()) return null;
+            return (
+              <div key={a.key} className="r-card" style={{ marginBottom: 14, borderLeft: `4px solid ${c}`, position: "relative", overflow: "hidden" }}>
+                <div style={{ position: "absolute", top: 0, right: 0, width: 90, height: 90, background: `radial-gradient(circle at 100% 0%, ${c}10, transparent 70%)`, pointerEvents: "none" }} />
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                  <span style={{ width: 36, height: 36, borderRadius: 10, background: `${c}12`, border: `1px solid ${c}25`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>{a.icon}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 12, fontWeight: 800, color: "#fff", background: c, padding: "2px 10px", borderRadius: 8, letterSpacing: "0.03em" }}>{a.key}</span>
+                      <span style={{ fontSize: 15, fontWeight: 800, color: "var(--text-primary)", letterSpacing: "-0.03em" }}>{a.name}</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{a.desc}</div>
+                  </div>
+                </div>
+                <div style={{ padding: "12px 14px", borderRadius: 10, background: "var(--bg-surface-2)", border: "1px solid var(--glass-border)" }}>
+                  <RichText text={text} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    })()}
+    {results.__full && (<div className="r-card" style={{ marginTop: 20, borderLeft: "4px solid var(--accent-primary)" }}><div className="r-card-header"><span className="r-card-icon">💡</span><span className="r-card-title">SCAMPER 전체 응답</span></div><RichText text={results.__full} /></div>)}
     {results.error && <div className="err-msg" style={{ marginTop: 16 }}>오류: {results.error}</div>}
     {(Object.keys(results).length > 0 && !results.error) && !running && <><div className="report-sticky-actions"><div className="report-sticky-inner"><div style={{ marginTop: 10 }}><ReportExportBar entryForExport={{ modeId: "scamper", title: clipTitle(idea), payload: { idea, fb, results } }} /></div><DeepAnalysisPanel idea={idea} context={ideaContext} existingReport={Object.values(results).join("\n\n")} personas={personas} globalKey={globalKey} /><ReportTools reportText={Object.values(results).join("\n\n")} personas={personas} globalKey={globalKey} /><SaveToArchiveBtn modeId="scamper" title={clipTitle(idea)} payload={{ idea, fb, results }} /></div></div></>}
   </div>);
@@ -3969,7 +4135,7 @@ function TotDeepDive({ personas, globalKey, totProvider, totModel, totApiKey, on
 
 // ─── Web App Prototyper ───
 // Module-level generation state — survives component unmount for true background processing
-const _protoGen = { running: false, itemId: null, skinKey: null, result: null, error: null, listeners: new Set() };
+const _protoGen = { running: false, itemId: null, skinKey: null, result: null, error: null, partial: "", listeners: new Set() };
 function _protoGenNotify() { _protoGen.listeners.forEach(fn => fn({})); }
 
 // Standalone generation function — runs independently of React component lifecycle
@@ -3979,26 +4145,43 @@ function _startProtoGeneration({ itemId, skinKey, ideaText, persona, notifyDone 
   _protoGen.skinKey = skinKey;
   _protoGen.result = null;
   _protoGen.error = null;
+  _protoGen.partial = "";
   _protoGenNotify();
 
   const skin = PROTOTYPER_SKINS[skinKey];
   const clipped = ideaText.length > 2000 ? ideaText.slice(0, 2000) + "\n…(이하 생략)" : ideaText;
   const userMsg = `[원본 아이디어]\n${clipped}\n\n[선택 스킨: ${skin.name}]\n${skin.cssGuide}\n\n위 아이디어를 Cursor AI / Claude Code에서 즉시 사용 가능한 완성형 웹앱 개발 마스터 프롬프트로 생성해주세요. 사용자 요구사항, 기술 스택, UI/UX 설계, 데이터 모델, API 설계, 배포 전략까지 포괄하는 종합 프롬프트를 작성하세요.`;
 
-  callAI(
+  callAIStream(
     { ...persona, role: PROTOTYPER_SYNTH_SYSTEM },
-    [{ role: "user", content: userMsg }]
+    [{ role: "user", content: userMsg }],
+    undefined,
+    (_chunk, full) => {
+      _protoGen.partial = full;
+      _protoGenNotify();
+    },
+    { maxTokens: 16000, timeoutMs: 300_000 }
   ).then(raw => {
     if (!raw || !raw.trim()) throw new Error("AI 응답이 비어있습니다. 다시 시도해 주세요.");
     _protoGen.running = false;
     _protoGen.result = raw;
+    _protoGen.partial = "";
     _protoGenNotify();
     notifyDone(clipTitle(ideaText));
   }).catch(err => {
+    const partialResult = _protoGen.partial;
     _protoGen.running = false;
-    _protoGen.error = err.message;
-    _protoGenNotify();
-    showAppToast(`🚀 프롬프트 생성 실패: ${err.message}`, "error", 6000);
+    _protoGen.partial = "";
+    if (partialResult && partialResult.length > 200) {
+      _protoGen.result = partialResult;
+      _protoGenNotify();
+      showAppToast("⚠️ 생성이 중단되었으나 부분 결과를 표시합니다", "info", 5000);
+      notifyDone(clipTitle(ideaText));
+    } else {
+      _protoGen.error = err.message;
+      _protoGenNotify();
+      showAppToast(`🚀 프롬프트 생성 실패: ${err.message}`, "error", 6000);
+    }
   });
 }
 
@@ -4039,12 +4222,14 @@ function WebAppPrototyper({ item, personas, globalKey, onClose }) {
       setPhase("result");
       setGenerating(false);
       _protoGen.result = null;
+    } else if (pg.partial && generating) {
+      // Streaming in progress — keep phase on "generating"
     } else if (!pg.running && generating) {
       // Generation ended (error or external)
       setPhase("skin");
       setGenerating(false);
     }
-  }, [pg.running, pg.result]);
+  }, [pg.running, pg.result, pg.partial]);
 
   const ideaText = useMemo(() => {
     const p = item.payload;
@@ -4153,11 +4338,26 @@ function WebAppPrototyper({ item, personas, globalKey, onClose }) {
         )}
 
         {phase === "generating" && (
-          <div className="proto-loading-phase">
-            <div className="proto-spinner" />
-            <div className="proto-loading-title">마스터 프롬프트 합성 중…</div>
-            <div className="proto-loading-sub">아이디어와 스킨 가이드를 바탕으로 작성 중입니다</div>
-            <button type="button" className="proto-bg-btn" onClick={handleClose}>
+          <div className="proto-loading-phase" style={pg.partial ? { display: "flex", flexDirection: "column", padding: "20px 24px" } : undefined}>
+            {pg.partial ? (
+              <>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, flexShrink: 0 }}>
+                  <span className="spinner" style={{ width: 16, height: 16 }} />
+                  <span style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", letterSpacing: "-0.02em" }}>마스터 프롬프트 작성 중…</span>
+                  <span style={{ fontSize: 12, color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>{(pg.partial.length / 1000).toFixed(1)}k 자</span>
+                </div>
+                <div style={{ flex: 1, minHeight: 0 }}>
+                  <StreamingRichText text={pg.partial} isStreaming={true} variant="synth" />
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="proto-spinner" />
+                <div className="proto-loading-title">마스터 프롬프트 합성 중…</div>
+                <div className="proto-loading-sub">AI 연결 대기 중입니다</div>
+              </>
+            )}
+            <button type="button" className="proto-bg-btn" onClick={handleClose} style={{ flexShrink: 0, marginTop: pg.partial ? 16 : 0 }}>
               🏠 백그라운드에서 계속 — 완료 시 알림
             </button>
           </div>
@@ -4229,7 +4429,10 @@ function ArchiveSaveModal({ entry, onClose }) {
   };
   const save = () => {
     const items = loadArchive();
-    const item = { id: `arc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, ts: Date.now(), group: selGroup, memo, modeId: entry.modeId, modeName: entry.modeName, modeIcon: entry.modeIcon, title: entry.title || "무제", payload: entry.payload };
+    const idea = entry.payload?.idea || entry.payload?.input || entry.payload?.ideasText || entry.title || "";
+    const cached = getAddonCache(idea);
+    const enrichedPayload = (cached && Object.keys(cached).length > 0) ? { ...entry.payload, _addons: cached } : entry.payload;
+    const item = { id: `arc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, ts: Date.now(), group: selGroup, memo, modeId: entry.modeId, modeName: entry.modeName, modeIcon: entry.modeIcon, title: entry.title || "무제", payload: enrichedPayload };
     items.unshift(item);
     saveArchive(items);
     onClose(true);
@@ -4450,6 +4653,7 @@ function ArchiveView({ personas, globalKey, onGoHome }) {
             </div>
             <div className="history-detail-scroll">
               <HistoryDetailBody entry={{ modeId: viewItem.modeId, payload: viewItem.payload }} personas={[]} />
+              <SavedAddonsDisplay payload={viewItem.payload} />
             </div>
             <div className="history-detail-footer">
               <div className="history-detail-footer-inner">
@@ -4843,9 +5047,14 @@ const ADDON_CATEGORIES = [
 
 function ReportAddonSection({ idea, context, existingReport, personas, globalKey }) {
   const { spend } = useCredits();
-  const [results, setResults] = useState({});
+  const cached = getAddonCache(idea);
+  const [results, setResults] = useState(cached);
   const [loading, setLoading] = useState({});
-  const [open, setOpen] = useState({});
+  const [open, setOpen] = useState(() => {
+    const o = {};
+    Object.keys(cached).forEach(k => { o[k] = true; });
+    return o;
+  });
 
   const [streaming, setStreaming] = useState({});
 
@@ -4872,7 +5081,7 @@ function ReportAddonSection({ idea, context, existingReport, personas, globalKey
           setOpen((p) => ({ ...p, [key]: true }));
         });
       }
-      setResults((p) => ({ ...p, [key]: r }));
+      setResults((p) => { const n = { ...p, [key]: r }; setAddonCache(idea, n); return n; });
       setOpen((p) => ({ ...p, [key]: true }));
     } catch (err) {
       setResults((p) => ({ ...p, [key]: `오류: ${err.message}` }));
@@ -6205,6 +6414,7 @@ export default function App() {
   const taskMgrCtx = useMemo(() => ({ startTask: bgTasks.startTask, completeTask: bgTasks.completeTask, clearTask: bgTasks.clearTask }), [bgTasks.startTask, bgTasks.completeTask, bgTasks.clearTask]);
 
   return (
+    <ViewportProvider>
     <>
       <style>{STYLES}</style>
       <div className={`splash-overlay ${splashDone ? "splash-out" : ""}`}>
@@ -6411,6 +6621,7 @@ export default function App() {
         </div>
       </div>
     </>
+    </ViewportProvider>
   );
 }
 
