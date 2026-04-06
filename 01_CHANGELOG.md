@@ -4,6 +4,34 @@
 
 ---
 
+## 2026-04-06 #32 — 웹앱 프롬프트 생성 결과 분석히스토리 저장 · 아카이브 프롬프트 이력 뷰어 · CSS 히스토리 버튼 스타일
+
+### 변경
+
+#### ① 웹앱 프롬프트 결과 → 분석 히스토리 자동 저장
+- `_startProtoGeneration`에 `onResult(raw, skinKey)` 콜백 파라미터 추가
+- `WebAppPrototyper`가 생성 완료 시 `recordHistory`를 호출해 modeId `"prototyper"` 엔트리로 분석히스토리에 자동 저장
+- `ArchiveView`에서 `recordHistory = useRecordHistory()` + `onProtoSaved` 콜백 배선
+
+#### ② 아카이브 아이템 — 웹앱 프롬프트 이력 뱃지·뷰어
+- 아카이브 카드에 `item.payload?._proto` 존재 시 "📱 프롬프트 이력" 버튼 노출 (`archive-proto-history` 클래스)
+- `ProtoHistoryModal` 컴포넌트 신설: 원본/렌더링 토글, 마크다운 복사, .md 다운로드, 🔄 새 스킨으로 재생성
+- 인디고 그라디언트 스타일(`archive-proto-history` CSS 규칙) 추가
+
+#### ③ HistoryDetailBody — prototyper modeId 브랜치
+- 분석히스토리 팝업에서 prototyper 항목 선택 시 소스 아카이브 제목·아이디어·프롬프트 결과 표시
+- `extractReportFromPayload`에 prototyper 케이스 추가
+
+#### ④ 아카이브 눈동자 팝업 안정화
+- viewItem 팝업에서 `HistoryDetailBody`, `SavedAddonsDisplay`, `DeepAnalysisPanel`, `ReportTools` 오류 케이스 점검
+- `extractReportFromPayload` prototyper 분기로 복사/내보내기 기능 정상화
+
+### 파일 변경
+- `src/App.jsx` — ProtoHistoryModal, ArchiveView recordHistory 배선, HistoryDetailBody prototyper 분기, extractReportFromPayload 수정, LAST_UPDATED 갱신
+- `src/styles.js` — `.archive-proto-history` CSS 규칙 추가
+
+---
+
 ## 2026-04-06 #31 — 분석히스토리·아카이브 팝업 3단 레이아웃 재설계 · 모바일 바텀시트 · 도구 하단 고정
 
 ### 변경

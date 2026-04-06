@@ -555,6 +555,8 @@ export const STYLES = `
   }
   .archive-proto-btn:hover { filter: brightness(1.08); transform: translateY(-1px); }
   .archive-proto-btn.archive-proto-done { background: linear-gradient(135deg, #059669, #10b981); }
+  .archive-proto-btn.archive-proto-history { background: linear-gradient(135deg, #4f46e5, #7c3aed); box-shadow: 0 2px 8px rgba(79,70,229,0.25); }
+  .archive-proto-btn.archive-proto-history:hover { filter: brightness(1.1); box-shadow: 0 4px 12px rgba(79,70,229,0.35); }
   .archive-proto-running {
     display: flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 8px;
     background: rgba(99,102,241,0.08); border: 1px solid rgba(99,102,241,0.15);

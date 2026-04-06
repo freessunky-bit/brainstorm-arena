@@ -57,7 +57,7 @@ import {
 import { STYLES } from "./styles.js";
 
 // ─── 앱 업데이트 시점 (코드 수정 시 반드시 갱신) ───
-const LAST_UPDATED = "2026-04-06 16:06 KST";
+const LAST_UPDATED = "2026-04-06 16:17 KST";
 
 const MODE_TAGLINES = {
   tournament: [
@@ -1022,6 +1022,33 @@ function HistoryDetailBody({ entry, personas }) {
     );
   }
 
+  if (modeId === "prototyper") {
+    const { idea, skinKey, skinName, result, sourceTitle } = payload;
+    return (
+      <div>
+        {sourceTitle && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, padding: "10px 14px", background: "rgba(99,102,241,0.06)", borderRadius: 10, border: "1px solid rgba(99,102,241,0.12)" }}>
+            <span style={{ fontSize: 14 }}>📦</span>
+            <span style={{ fontSize: 13, color: "var(--text-secondary)", fontWeight: 500 }}>원본 아카이브: <strong style={{ color: "var(--text-primary)" }}>{sourceTitle}</strong></span>
+          </div>
+        )}
+        <div className="s-label">아이디어</div>
+        <div className="r-card" style={{ marginBottom: 14 }}><RichText text={idea || ""} /></div>
+        <div className="r-card" style={{ borderLeft: "4px solid #6366f1", position: "relative", overflow: "hidden" }}>
+          <div style={{ position: "absolute", top: 0, right: 0, width: 80, height: 80, background: "radial-gradient(circle at 100% 0%, rgba(99,102,241,0.08), transparent 70%)", pointerEvents: "none" }} />
+          <div className="r-card-header">
+            <span className="r-card-icon">✨</span>
+            <span className="r-card-title">웹앱 마스터 프롬프트</span>
+            {skinName && <span className="r-card-badge" style={{ background: "rgba(99,102,241,0.1)", color: "#6366f1", border: "1px solid rgba(99,102,241,0.2)" }}>📐 {skinName}</span>}
+          </div>
+          <div style={{ padding: "12px 14px", borderRadius: 10, background: "var(--bg-surface-2)", border: "1px solid var(--glass-border)" }}>
+            <RichText text={result || ""} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (modeId === "pipeline") {
     const { idea, results: steps = [] } = payload;
     return (
@@ -1238,6 +1265,7 @@ function extractIdeaFromPayload(entry) {
 }
 function extractReportFromPayload(entry) {
   const p = entry?.payload;
+  if (entry?.modeId === "prototyper") return p?.result || "";
   return p?.synthesis || p?.result || p?.solution || p?.finalReport || p?.rawFallback || (typeof p === "string" ? p : JSON.stringify(p || {}));
 }
 
@@ -4144,7 +4172,8 @@ const _protoGen = { running: false, itemId: null, skinKey: null, result: null, e
 function _protoGenNotify() { _protoGen.listeners.forEach(fn => fn({})); }
 
 // Standalone generation function — runs independently of React component lifecycle
-function _startProtoGeneration({ itemId, skinKey, ideaText, persona, notifyDone }) {
+// onResult(raw, skinKey) — called when generation succeeds (for history + archive update)
+function _startProtoGeneration({ itemId, skinKey, ideaText, persona, notifyDone, onResult }) {
   _protoGen.running = true;
   _protoGen.itemId = itemId;
   _protoGen.skinKey = skinKey;
@@ -4173,6 +4202,7 @@ function _startProtoGeneration({ itemId, skinKey, ideaText, persona, notifyDone 
     _protoGen.partial = "";
     _protoGenNotify();
     notifyDone(clipTitle(ideaText));
+    onResult?.(raw, skinKey);
   }).catch(err => {
     const partialResult = _protoGen.partial;
     _protoGen.running = false;
@@ -4182,6 +4212,7 @@ function _startProtoGeneration({ itemId, skinKey, ideaText, persona, notifyDone 
       _protoGenNotify();
       showAppToast("⚠️ 생성이 중단되었으나 부분 결과를 표시합니다", "info", 5000);
       notifyDone(clipTitle(ideaText));
+      onResult?.(partialResult, skinKey);
     } else {
       _protoGen.error = err.message;
       _protoGenNotify();
@@ -4201,7 +4232,7 @@ function useProtoGenState() {
   return _protoGen;
 }
 
-function WebAppPrototyper({ item, personas, globalKey, onClose }) {
+function WebAppPrototyper({ item, personas, globalKey, onClose, recordHistory, onProtoSaved }) {
   const pg = useProtoGenState();
   const hasCached = pg.itemId === item.id && pg.result;
   const isRunning = pg.running && pg.itemId === item.id;
@@ -4275,6 +4306,24 @@ function WebAppPrototyper({ item, personas, globalKey, onClose }) {
       ideaText,
       persona,
       notifyDone,
+      onResult: (raw, sk) => {
+        const skin = PROTOTYPER_SKINS[sk];
+        // 1) 분석 히스토리에 저장
+        recordHistory?.({
+          modeId: "prototyper",
+          title: clipTitle(ideaText),
+          payload: {
+            idea: ideaText,
+            skinKey: sk,
+            skinName: skin?.name || sk,
+            result: raw,
+            sourceItemId: item.id,
+            sourceTitle: item.title,
+          },
+        });
+        // 2) 아카이브 항목에 _proto 필드 업데이트
+        onProtoSaved?.({ skinKey: sk, skinName: skin?.name || sk, result: raw, ts: Date.now() });
+      },
     });
   };
 
@@ -4417,6 +4466,86 @@ function WebAppPrototyper({ item, personas, globalKey, onClose }) {
   );
 }
 
+// ─── 웹앱 프롬프트 이력 뷰어 모달 ───
+function ProtoHistoryModal({ item, onClose, onRegenerate }) {
+  const proto = item?.payload?._proto;
+  const [viewRaw, setViewRaw] = useState(false);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+  if (!proto) return null;
+
+  const copy = () => {
+    const doCopy = (text) => navigator.clipboard?.writeText(text).catch(() => {
+      const ta = document.createElement("textarea"); ta.value = text; ta.style.cssText = "position:fixed;left:-9999px;opacity:0"; document.body.appendChild(ta); ta.select(); try { document.execCommand("copy"); } catch (_) {} document.body.removeChild(ta);
+    });
+    doCopy(proto.result).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
+  };
+  const download = () => {
+    const blob = new Blob([proto.result], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = "master-prompt.md"; a.click(); URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="history-detail-overlay" onClick={onClose} role="presentation">
+      <div className="history-detail-panel" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true">
+        <div className="history-detail-handle" aria-hidden="true" />
+        <div className="history-detail-head">
+          <div style={{ minWidth: 0 }}>
+            <h3>📱 웹앱 프롬프트 이력</h3>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: "#fff", background: "#6366f1", padding: "2px 10px", borderRadius: 8 }}>{proto.skinName || proto.skinKey}</span>
+              <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{new Date(proto.ts).toLocaleString("ko-KR")}</span>
+            </div>
+            {item.title && <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>📦 {item.title}</p>}
+          </div>
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
+            <button type="button" className={`proto-view-toggle${viewRaw ? " active" : ""}`} style={{ fontSize: 11, padding: "5px 10px" }} onClick={() => setViewRaw(v => !v)}>
+              {viewRaw ? "📖 렌더링" : "📝 원본"}
+            </button>
+            <button type="button" className="modal-close" onClick={onClose} aria-label="닫기">✕</button>
+          </div>
+        </div>
+
+        <div className="history-detail-scroll">
+          {/* 프롬프트 내용 */}
+          <div style={{ background: "linear-gradient(135deg, rgba(99,102,241,0.05), rgba(37,99,235,0.03))", border: "1px solid rgba(99,102,241,0.15)", borderRadius: 12, padding: "14px 16px", marginBottom: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <span style={{ fontSize: 16 }}>✨</span>
+              <span style={{ fontSize: 13, fontWeight: 800, color: "#6366f1", letterSpacing: "-0.02em" }}>마스터 프롬프트</span>
+              <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: "auto" }}>{(proto.result.length / 1000).toFixed(1)}k자</span>
+            </div>
+            {viewRaw ? (
+              <pre style={{ fontSize: 12, lineHeight: 1.7, color: "var(--text-primary)", whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "var(--font-sans)", margin: 0 }}>{proto.result}</pre>
+            ) : (
+              <RichText text={proto.result} />
+            )}
+          </div>
+        </div>
+
+        <div className="history-detail-footer">
+          <div className="history-detail-footer-grab" aria-hidden="true" />
+          <div className="history-detail-footer-inner" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button type="button" className="btn-cta" style={{ flex: 1, minWidth: 120, fontSize: 13, padding: "11px 16px", minHeight: 44 }} onClick={copy}>
+                {copied ? "✓ 복사됨" : "📋 마크다운 복사"}
+              </button>
+              <button type="button" className="btn-ghost" style={{ fontSize: 13, padding: "11px 16px" }} onClick={download}>.md 다운로드</button>
+            </div>
+            <button type="button" className="btn-ghost" style={{ fontSize: 12, padding: "9px 14px", borderColor: "rgba(99,102,241,0.3)", color: "#6366f1" }} onClick={onRegenerate}>
+              🔄 새 스킨으로 재생성
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main App ───
 function ArchiveSaveModal({ entry, onClose }) {
   const [groups, setGroups] = useState(loadArchiveGroups);
@@ -4481,8 +4610,21 @@ function ArchiveView({ personas, globalKey, onGoHome }) {
   const [confirmDel, setConfirmDel] = useState(null);
   const [viewItem, setViewItem] = useState(null);
   const [protoItem, setProtoItem] = useState(null);
+  const [protoHistoryItem, setProtoHistoryItem] = useState(null); // 저장된 웹앱 프롬프트 이력 뷰어
   const [showNewGroup, setShowNewGroup] = useState(false);
   const pg = useProtoGenState();
+  const recordHistory = useRecordHistory();
+
+  // 프로토타이퍼 결과 아카이브 항목에 저장
+  const handleProtoSaved = useCallback((protoData, targetItem) => {
+    setItems(prev => {
+      const updated = prev.map(it =>
+        it.id === targetItem.id ? { ...it, payload: { ...it.payload, _proto: protoData } } : it
+      );
+      saveArchive(updated);
+      return updated;
+    });
+  }, []);
   useEffect(() => {
     if (!viewItem || protoItem) return;
     const prev = document.body.style.overflow;
@@ -4618,20 +4760,29 @@ function ArchiveView({ personas, globalKey, onGoHome }) {
                 </button>
               )}
             </div>
-            {pg.running && pg.itemId === item.id ? (
-              <span className="archive-proto-running" onClick={() => setProtoItem(item)}>
-                <span className="spinner" style={{ width: 10, height: 10, borderWidth: 1.5, borderColor: "rgba(99,102,241,0.25)", borderTopColor: "#6366f1" }} />
-                웹앱 프롬프트 생성중…
-              </span>
-            ) : pg.result && pg.itemId === item.id ? (
-              <button type="button" className="archive-proto-btn archive-proto-done" onClick={() => setProtoItem(item)}>
-                ✅ 결과 보기
-              </button>
-            ) : (
-              <button type="button" className="archive-proto-btn" onClick={() => setProtoItem(item)}>
-                🚀 웹앱 프롬프트
-              </button>
-            )}
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+              {/* 저장된 웹앱 프롬프트 이력 버튼 */}
+              {item.payload?._proto && (
+                <button type="button" className="archive-proto-btn archive-proto-history" onClick={() => setProtoHistoryItem(item)} title="저장된 웹앱 프롬프트 보기">
+                  <span style={{ fontSize: 11 }}>📱</span> 프롬프트 이력
+                </button>
+              )}
+              {/* 생성 중 / 결과 / 신규 버튼 */}
+              {pg.running && pg.itemId === item.id ? (
+                <span className="archive-proto-running" onClick={() => setProtoItem(item)}>
+                  <span className="spinner" style={{ width: 10, height: 10, borderWidth: 1.5, borderColor: "rgba(99,102,241,0.25)", borderTopColor: "#6366f1" }} />
+                  웹앱 프롬프트 생성중…
+                </span>
+              ) : pg.result && pg.itemId === item.id ? (
+                <button type="button" className="archive-proto-btn archive-proto-done" onClick={() => setProtoItem(item)}>
+                  ✅ 결과 보기
+                </button>
+              ) : (
+                <button type="button" className="archive-proto-btn" onClick={() => setProtoItem(item)}>
+                  🚀 웹앱 프롬프트
+                </button>
+              )}
+            </div>
           </div>
         </div>
       ))}
@@ -4675,7 +4826,20 @@ function ArchiveView({ personas, globalKey, onGoHome }) {
       )}
 
       {protoItem && ReactDOM.createPortal(
-        <WebAppPrototyper item={protoItem} personas={personas} globalKey={globalKey} onClose={() => setProtoItem(null)} />,
+        <WebAppPrototyper
+          item={protoItem}
+          personas={personas}
+          globalKey={globalKey}
+          onClose={() => setProtoItem(null)}
+          recordHistory={recordHistory}
+          onProtoSaved={(protoData) => handleProtoSaved(protoData, protoItem)}
+        />,
+        document.body
+      )}
+
+      {/* 웹앱 프롬프트 이력 뷰어 */}
+      {protoHistoryItem && ReactDOM.createPortal(
+        <ProtoHistoryModal item={protoHistoryItem} onClose={() => setProtoHistoryItem(null)} onRegenerate={() => { setProtoHistoryItem(null); setProtoItem(protoHistoryItem); }} />,
         document.body
       )}
     </div>
