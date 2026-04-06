@@ -4,6 +4,33 @@
 
 ---
 
+## 2026-04-06 #31 — 분석히스토리·아카이브 팝업 3단 레이아웃 재설계 · 모바일 바텀시트 · 도구 하단 고정
+
+### 변경
+
+#### ① 팝업 flex 레이아웃 근본 수정 (footer 사라짐 버그)
+- **원인**: `flex: 1 1 auto` 스크롤 영역의 flex-basis=콘텐츠 높이 → 리포트가 길면 footer가 비례 축소되어 사라짐
+- **수정**: `flex: 1 1 0` (basis=0)으로 변경 → footer 크기 먼저 확보 후 남은 공간 전부 스크롤이 차지
+- `history-detail-footer`: `flex: 0 1 auto` → `flex: 0 0 auto` (footer 절대 고정, 수축 불가)
+- `max-height: 55%` → `max-height: 46vh` (뷰포트 기준으로 안정화)
+
+#### ② 모바일 바텀시트 레이아웃 전환
+- 오버레이 `align-items: flex-end` + 패널 `border-radius: 16px 16px 0 0` → 네이티브 바텀시트 감성
+- 패널 상단 드래그 핸들(`.history-detail-handle`), 도구 영역 상단 구분 그랩 바 추가
+- 모바일 `min-height: 30vh` 스크롤 보장 + 푸터 `max-height: 42vh`
+- `100dvh` + `safe-area-inset-bottom` 지원으로 노치/홈바 기기 대응
+
+#### ③ 데스크톱: 중앙 플로팅 패널 유지
+- `min-width: 1024px`에서 오버레이 `align-items: center; padding: 24px` → 기존 중앙 정렬 복원
+- 드래그 핸들 숨김, `border-radius: 16px` 전체 둥근 모서리
+- 분석히스토리·아카이브 팝업 동일하게 적용
+
+### 파일 변경
+- `src/styles.js` — history-detail 3단 flex 구조, 모바일/데스크톱 분기, 드래그 핸들
+- `src/App.jsx` — HistoryDetailModal·ArchiveView 팝업 JSX 핸들 추가, 인라인 style 제거
+
+---
+
 ## 2026-04-05 #30 — PC/데스크톱 반응형 스케일업 · ViewportProvider 코드 구조 개선
 
 ### 변경

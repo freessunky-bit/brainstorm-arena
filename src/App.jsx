@@ -57,7 +57,7 @@ import {
 import { STYLES } from "./styles.js";
 
 // ─── 앱 업데이트 시점 (코드 수정 시 반드시 갱신) ───
-const LAST_UPDATED = "2026-04-05 11:49 KST";
+const LAST_UPDATED = "2026-04-06 16:06 KST";
 
 const MODE_TAGLINES = {
   tournament: [
@@ -1267,12 +1267,14 @@ function HistoryDetailModal({ entry, onClose, personas, globalKey }) {
   return ReactDOM.createPortal(
     <div className="history-detail-overlay" onClick={onClose} role="presentation">
       <div className="history-detail-panel" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+        {/* 모바일 바텀시트 드래그 핸들 */}
+        <div className="history-detail-handle" aria-hidden="true" />
         <div className="history-detail-head">
           <div style={{ minWidth: 0 }}>
             <h3>{entry.modeIcon} {entry.modeName}</h3>
-            <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 6 }}>{new Date(entry.ts).toLocaleString("ko-KR")}</p>
+            <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>{new Date(entry.ts).toLocaleString("ko-KR")}</p>
           </div>
-          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
             <button type="button" className="idea-stack-btn" style={{ padding: "6px 12px", fontSize: 12 }} onClick={() => saveToArchive({ modeId: entry.modeId, modeName: entry.modeName, modeIcon: entry.modeIcon, title: entry.title, payload: entry.payload })}>
               📦 아카이브
             </button>
@@ -1282,11 +1284,14 @@ function HistoryDetailModal({ entry, onClose, personas, globalKey }) {
             <button type="button" className="modal-close" onClick={onClose} aria-label="닫기">✕</button>
           </div>
         </div>
+        {/* 콘텐츠 스크롤 영역: flex: 1 1 0 으로 남은 공간 전부 차지 */}
         <div className="history-detail-scroll">
           <HistoryDetailBody entry={entry} personas={personas} />
           <SavedAddonsDisplay payload={entry.payload} />
         </div>
+        {/* 도구 영역: flex: 0 0 auto 로 항상 하단 고정 */}
         <div className="history-detail-footer">
+          <div className="history-detail-footer-grab" aria-hidden="true" />
           <div className="history-detail-footer-inner">
             <ReportExportBar entryForExport={{ modeId: entry.modeId, title: entry.title, payload: entry.payload }} />
             <DeepAnalysisPanel idea={extractIdeaFromPayload(entry)} context={entry.payload?.fb || entry.payload?.context || ""} existingReport={extractReportFromPayload(entry)} personas={personas} globalKey={globalKey} />
@@ -4639,14 +4644,15 @@ function ArchiveView({ personas, globalKey, onGoHome }) {
 
       {viewItem && !protoItem && ReactDOM.createPortal(
         <div className="history-detail-overlay" onClick={() => setViewItem(null)} role="presentation">
-          <div className="history-detail-panel" style={{ maxHeight: "min(94vh, 1100px)" }} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+          <div className="history-detail-panel" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+            <div className="history-detail-handle" aria-hidden="true" />
             <div className="history-detail-head">
               <div style={{ minWidth: 0 }}>
                 <h3>{viewItem.modeIcon} {viewItem.modeName}</h3>
-                <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 6 }}>{new Date(viewItem.ts).toLocaleString("ko-KR")}</p>
+                <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>{new Date(viewItem.ts).toLocaleString("ko-KR")}</p>
                 {viewItem.memo && <p style={{ fontSize: 11, color: "var(--accent-primary)", marginTop: 4, fontStyle: "italic" }}>📝 {viewItem.memo}</p>}
               </div>
-              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
                 <button type="button" className="idea-stack-btn" style={{ padding: "6px 12px", fontSize: 12 }} onClick={() => copyItem(viewItem)}>📋 복사</button>
                 <button type="button" className="modal-close" onClick={() => setViewItem(null)} aria-label="닫기">✕</button>
               </div>
@@ -4656,6 +4662,7 @@ function ArchiveView({ personas, globalKey, onGoHome }) {
               <SavedAddonsDisplay payload={viewItem.payload} />
             </div>
             <div className="history-detail-footer">
+              <div className="history-detail-footer-grab" aria-hidden="true" />
               <div className="history-detail-footer-inner">
                 <ReportExportBar entryForExport={{ modeId: viewItem.modeId, title: viewItem.title, payload: viewItem.payload }} />
                 <DeepAnalysisPanel idea={extractIdeaFromPayload(viewItem)} context={viewItem.payload?.fb || viewItem.payload?.context || ""} existingReport={extractReportFromPayload(viewItem)} personas={personas} globalKey={globalKey} />
