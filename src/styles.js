@@ -2111,7 +2111,18 @@ export const STYLES = `
   .mix-wheel-col { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; }
   .mix-wheel-label {
     font-size: 13px; font-weight: 700; color: #374151; letter-spacing: 0.04em; text-transform: uppercase;
-    margin-bottom: 10px;
+    margin-bottom: 10px; flex-shrink: 0;
+  }
+  /* 양쪽 컬럼 헤더 높이 통일 — 라벨+버튼 vs 라벨만 의 Y좌표 틀어짐 방지 */
+  .mix-wheel-col-header {
+    width: 100%; min-height: 40px; margin-bottom: 8px;
+    display: flex; flex-direction: row; align-items: center;
+    justify-content: space-between; flex-wrap: nowrap; gap: 6px;
+  }
+  .mix-wheel-col-header .mix-wheel-label { margin-bottom: 0; }
+  .mix-load-btn {
+    padding: 5px 10px; font-size: 11.5px; flex-shrink: 0;
+    white-space: nowrap; line-height: 1.3;
   }
   .mix-wheel {
     position: relative; width: 100%; height: 340px; overflow: hidden;
@@ -2281,6 +2292,15 @@ export const STYLES = `
     .mix-center-icon { width: 42px; height: 42px; }
     .mix-center-icon svg { width: 16px; height: 16px; }
     .mix-match-left, .mix-match-right { max-width: 100%; font-size: 13px; }
+    /* 모바일: 컬럼 헤더 고정 높이 — 버튼 wrap 여부 무관하게 양쪽 wheel 시작 Y 일치 */
+    .mix-wheel-col-header {
+      min-height: 58px; flex-direction: column;
+      align-items: flex-start; justify-content: center; gap: 4px;
+    }
+    .mix-load-btn { font-size: 11px; padding: 4px 9px; }
+    .mix-load-btn-text { display: none; }
+    /* center 버튼: 헤더 높이만큼 아래로 보정하여 wheel 중심에 정렬 */
+    .mix-center-indicator { top: calc(50% + 6px); }
   }
 
   /* ── Onboarding Toast Overlay ── */

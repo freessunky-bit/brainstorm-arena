@@ -57,7 +57,7 @@ import {
 import { STYLES } from "./styles.js";
 
 // ─── 앱 업데이트 시점 (코드 수정 시 반드시 갱신) ───
-const LAST_UPDATED = "2026-04-06 16:24 KST";
+const LAST_UPDATED = "2026-04-06 16:39 KST";
 
 const MODE_TAGLINES = {
   tournament: [
@@ -3615,13 +3615,12 @@ function MixupRoulette({ personas, globalKey, mixProvider, mixModel, mixApiKey, 
 
       <div className="mix-wheel-area">
         <div className="mix-wheel-col">
-          <div className="idea-stack-toolbar" style={{ marginBottom: 6 }}>
+          <div className="mix-wheel-col-header">
             <div className="mix-wheel-label" style={{ margin: 0 }}>아이디어 파츠</div>
             {mixLeftStackCount > 0 && (
               <button
                 type="button"
-                className="idea-stack-btn"
-                style={{ padding: "6px 12px", fontSize: 12 }}
+                className="idea-stack-btn mix-load-btn"
                 onClick={() => {
                   const stack = loadIdeaStack();
                   const ni = [...leftItems];
@@ -3635,7 +3634,7 @@ function MixupRoulette({ personas, globalKey, mixProvider, mixModel, mixApiKey, 
                   setLeftItems(trimmed);
                 }}
               >
-                📋 전체 불러오기 ({mixLeftStackCount})
+                📋 <span className="mix-load-btn-text">전체 불러오기</span> ({mixLeftStackCount})
               </button>
             )}
           </div>
@@ -3705,7 +3704,9 @@ function MixupRoulette({ personas, globalKey, mixProvider, mixModel, mixApiKey, 
         {ob.visible && <ObHint menuId="mixroulette" onDismiss={ob.dismiss} />}
 
         <div className="mix-wheel-col">
-          <div className="mix-wheel-label">AI 트렌드</div>
+          <div className="mix-wheel-col-header">
+            <div className="mix-wheel-label" style={{ margin: 0 }}>AI 트렌드</div>
+          </div>
           <MixWheel
             items={rightItems}
             scrollRef={rightRef}

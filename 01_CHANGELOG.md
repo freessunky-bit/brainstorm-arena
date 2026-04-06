@@ -4,6 +4,28 @@
 
 ---
 
+## 2026-04-06 #34 — 믹스업 룰렛 좌우 컬럼 Y좌표 정렬 수정 (모바일)
+
+### 변경
+
+#### 원인
+- 좌측 컬럼 헤더: `idea-stack-toolbar` (라벨 + "📋 전체 불러오기" 버튼) — 모바일(~157px 컬럼 폭)에서 버튼이 2번째 줄로 wrap → 헤더 ~53px
+- 우측 컬럼 헤더: 라벨 단독 1줄 → ~20px
+- 결과: 좌측 wheel이 우측 wheel보다 ~33px 아래에서 시작 (시각적 틀어짐)
+
+#### 수정
+- 양쪽 컬럼 헤더를 `.mix-wheel-col-header` 래퍼로 통일
+  - 데스크톱: `flex-direction: row; min-height: 40px` — 라벨+버튼 가로 배치
+  - 모바일: `flex-direction: column; min-height: 58px; justify-content: center` — 두 컬럼 모두 58px 고정 → wheel 시작 Y 일치
+- `.mix-load-btn`: 모바일에서 "📋 (N)" 축약 표시 (`mix-load-btn-text` 텍스트 숨김)
+- 모바일 `.mix-center-indicator { top: calc(50% + 6px) }` — 헤더 높이 반영 보정
+
+### 파일 변경
+- `src/App.jsx` — 좌측 헤더 `idea-stack-toolbar` → `mix-wheel-col-header`, 우측 라벨 동일 래퍼로 감쌈, `mix-load-btn-text` span 추가, LAST_UPDATED 갱신
+- `src/styles.js` — `.mix-wheel-col-header`, `.mix-load-btn`, `.mix-load-btn-text` 신규 CSS, 모바일 미디어쿼리 보정
+
+---
+
 ## 2026-04-06 #33 — 백그라운드 완료 토스트 카드 UI 전면 재설계 (모바일 최적화)
 
 ### 변경
