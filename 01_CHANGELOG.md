@@ -4,6 +4,74 @@
 
 ---
 
+## 2026-04-06 #37 — 스트리밍 출력 영역 높이 60vh 제한 (모바일 최적화)
+
+### 변경
+
+#### 문제
+- `StreamingRichText` 컴포넌트의 출력 영역이 고정 px 값(520px~600px)으로 설정되어 9:16 모바일 디바이스 화면의 80% 이상을 점유 → 가독성 저하
+
+#### 수정
+- `STREAM_HEIGHTS` 상수를 고정 px → CSS `min()` 함수 기반으로 변경
+  - `card`: `520px` → `min(520px, 60vh)`
+  - `synth`: `600px` → `min(600px, 60vh)`
+  - `tot`: `540px` → `min(540px, 60vh)`
+  - `compact`: `360px` → `min(360px, 48vh)`
+  - `chat`: `320px` → `min(320px, 42vh)`
+- PC(뷰포트 높이 900px 이상)에서는 기존 px 한도 유지, 모바일에서 화면의 약 60% 이하로 자동 제한
+
+### 파일 변경
+- `src/App.jsx` — `STREAM_HEIGHTS` 값 `min(px, vh)` 형식으로 교체
+
+---
+
+## 2026-04-06 #36 — 아카이브 저장 시 아이디어 스택 자동 동기화
+
+### 변경
+
+#### 기능 추가
+- 아카이브 저장(`ArchiveSaveModal`) 시 payload에서 아이디어를 추출해 아이디어 스택에 자동 적재
+- 각 메뉴별 아이디어 입력창 "불러오기"에서 아카이브에 저장된 아이디어도 확인 가능
+
+#### 모드별 추출 로직 (`extractIdeasFromArchivePayload`)
+- **tournament**: `finalTop`(수상 아이디어) + `seedIdeas`(입력 아이디어) + `aiIdeas`(AI 생성 아이디어)
+- **hyperniche**: `input` + `ideas` 배열
+- **mixroulette**: `combined_concept` + `leftItems` + `rightItems`
+- **나머지 (analyze, devil 등)**: `idea` / `input` / `ideasText`
+
+#### 중복 방지
+- `extractIdeasFromArchivePayload` 내부 `Set`으로 1차 중복 제거
+- `addToIdeaStack()`의 기존 대소문자 무시 비교로 2차 중복 방지
+
+### 파일 변경
+- `src/App.jsx` — `extractIdeasFromArchivePayload` 헬퍼 함수 추가, `ArchiveSaveModal.save()`에 스택 적재 로직 삽입
+
+---
+
+## 2026-04-06 #35 — 토너먼트 라운드 전환 알럿 (라운드 완료 → 다음 라운드 안내)
+
+### 변경
+
+#### 문제
+- 토너먼트 각 라운드(32강·16강·8강·준결승·결승) 완료 후 피드백 없이 즉시 다음 라운드가 시작 → 사용자 경험 단절
+
+#### 추가 기능
+- 각 라운드 종료 후 2.8초 동안 중앙 오버레이 알럿 표시
+  - 헤더: 라운드 이모지 + 라운드명 + "완료" + 진출자 수
+  - 승자 목록: 각 승자가 ✓ 체크와 함께 stagger fade-in (0.07초 간격)
+  - 다음 라운드 안내: 하단에 `{emoji} {다음라운드명} 진행` 배지
+- 오버레이 배경: `backdrop-filter: blur(8px)` 처리로 집중감 부여
+- 마지막 라운드(결승) 이후에는 오버레이 미표시
+
+#### 구현
+- `roundSummary` 상태 추가 (`{ roundName, winners, nextRoundName, emoji, color, nextEmoji, nextColor }`)
+- 기존 `setTimeout(1500~2500)` 대기를 `setRoundSummary` 오버레이 표시 + 2800ms 대기로 교체
+
+### 파일 변경
+- `src/App.jsx` — `roundSummary` state 추가, `go()` 라운드 전환 로직 수정, Tournament JSX에 오버레이 렌더링 추가
+
+---
+
 ## 2026-04-06 #34 — 믹스업 룰렛 좌우 컬럼 Y좌표 정렬 수정 (모바일)
 
 ### 변경

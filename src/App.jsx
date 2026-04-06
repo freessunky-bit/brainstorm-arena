@@ -613,8 +613,8 @@ function rndr(t) {
   );
 }
 
-// maxHeight: "card" 520px | "synth" 600px | "compact" 360px | "addon" 없음(부모가 관리) | "chat" 320px | "tot" 540px
-const STREAM_HEIGHTS = { card: 520, synth: 600, compact: 360, chat: 320, tot: 540 };
+// maxHeight: "card" min(520,60vh) | "synth" min(600,60vh) | "compact" min(360,48vh) | "addon" 없음(부모가 관리) | "chat" min(320,42vh) | "tot" min(540,60vh)
+const STREAM_HEIGHTS = { card: "min(520px, 60vh)", synth: "min(600px, 60vh)", compact: "min(360px, 48vh)", chat: "min(320px, 42vh)", tot: "min(540px, 60vh)" };
 
 function StreamingRichText({ text, isStreaming, variant = "card" }) {
   const scrollRef = useRef(null);
@@ -2201,6 +2201,7 @@ function Tournament({ personas, globalKey, utilProvider, utilModel, utilApiKey, 
   const [expandedMatch, setExpandedMatch] = useState(null);
   const [dynLabels, setDynLabels] = useState({ labels: ROUND_LABELS, colors: ROUND_COLORS, emojis: ROUND_EMOJIS });
   const [pendingMatches, setPendingMatches] = useState([]);
+  const [roundSummary, setRoundSummary] = useState(null);
   const [totalEntries, setTotalEntries] = useState(0);
   const [popSlot, setPopSlot] = useState(-1);
   const [stackCount, setStackCount] = useState(() => loadIdeaStack().length);
@@ -2330,7 +2331,20 @@ function Tournament({ personas, globalKey, utilProvider, utilModel, utilApiKey, 
         rem = w;
       }
       if (rem.length > 1) {
-        await new Promise((r) => setTimeout(r, rem.length === 2 ? 2500 : 1500));
+        const nextRn = rn + 1;
+        const nextName = dl.labels[nextRn] || `R${nextRn + 1}`;
+        setRoundSummary({
+          roundName: name,
+          winners,
+          nextRoundName: nextName,
+          emoji: dl.emojis[rn] || "⚔️",
+          color: dl.colors[rn] || "#3182f6",
+          nextEmoji: dl.emojis[nextRn] || "⚔️",
+          nextColor: dl.colors[nextRn] || "#3182f6",
+        });
+        await new Promise((r) => setTimeout(r, 2800));
+        setRoundSummary(null);
+        await new Promise((r) => setTimeout(r, 200));
       }
       rn++;
     }
@@ -2686,6 +2700,59 @@ function Tournament({ personas, globalKey, utilProvider, utilModel, utilApiKey, 
             </div>
           )}
         </>
+      )}
+      {roundSummary && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 9999,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          background: "rgba(0,0,0,0.6)", backdropFilter: "blur(8px)",
+          animation: "fiu 0.25s ease-out",
+        }}>
+          <div style={{
+            background: "var(--bg-surface-1)", borderRadius: 20,
+            padding: "28px 24px", maxWidth: 400, width: "90%",
+            border: `1px solid ${roundSummary.color}35`,
+            boxShadow: `0 24px 80px rgba(0,0,0,0.5), 0 0 0 1px ${roundSummary.color}12`,
+            animation: "fiu 0.35s cubic-bezier(0.33,1,0.68,1)",
+          }}>
+            <div style={{ textAlign: "center", marginBottom: 18 }}>
+              <div style={{ fontSize: 38, marginBottom: 6 }}>{roundSummary.emoji}</div>
+              <div style={{ fontSize: 17, fontWeight: 800, color: roundSummary.color, letterSpacing: "-0.03em" }}>
+                {roundSummary.roundName} 완료
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 3 }}>
+                {roundSummary.winners.length}명 진출
+              </div>
+            </div>
+            <div style={{ marginBottom: 16, maxHeight: 220, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
+              {roundSummary.winners.map((w, i) => (
+                <div key={i} style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  padding: "8px 12px",
+                  background: `${roundSummary.color}08`,
+                  border: `1px solid ${roundSummary.color}18`,
+                  borderRadius: 10, fontSize: 13,
+                  animation: `fiu 0.3s ease-out ${Math.min(i * 0.07, 0.5)}s both`,
+                }}>
+                  <span style={{ fontSize: 13, color: roundSummary.color, fontWeight: 800, flexShrink: 0 }}>✓</span>
+                  <span style={{ color: "var(--text-primary)", fontWeight: 600, lineHeight: 1.4 }}>{w}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+              padding: "11px 14px",
+              background: `${roundSummary.nextColor}08`,
+              border: `1px solid ${roundSummary.nextColor}25`,
+              borderRadius: 12,
+            }}>
+              <span style={{ fontSize: 20 }}>{roundSummary.nextEmoji}</span>
+              <div style={{ fontSize: 13, fontWeight: 800, color: roundSummary.nextColor }}>
+                {roundSummary.nextRoundName} 진행
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -4548,6 +4615,30 @@ function ProtoHistoryModal({ item, onClose, onRegenerate }) {
 }
 
 // ─── Main App ───
+function extractIdeasFromArchivePayload(modeId, payload) {
+  if (!payload) return [];
+  const raw = [];
+  if (modeId === "tournament") {
+    (payload.finalTop || []).forEach(item => { if (item?.idea?.trim()) raw.push(item.idea.trim()); });
+    (payload.seedIdeas || []).forEach(s => { if (s?.trim()) raw.push(s.trim()); });
+    (payload.aiIdeas || []).forEach(s => { if (s?.trim()) raw.push(s.trim()); });
+  } else if (modeId === "hyperniche") {
+    if (payload.input?.trim()) raw.push(payload.input.trim());
+    (payload.ideas || []).forEach(s => { if (s?.trim()) raw.push(s.trim()); });
+  } else if (modeId === "mixroulette") {
+    if (payload.combined_concept?.trim()) raw.push(payload.combined_concept.trim());
+    (payload.leftItems || []).forEach(s => { if (s?.trim()) raw.push(s.trim()); });
+    (payload.rightItems || []).forEach(s => { if (s?.trim()) raw.push(s.trim()); });
+  } else {
+    if (payload.idea?.trim()) raw.push(payload.idea.trim());
+    if (payload.input?.trim()) raw.push(payload.input.trim());
+    if (payload.ideasText?.trim()) {
+      payload.ideasText.split("\n").map(l => l.trim()).filter(Boolean).forEach(l => raw.push(l));
+    }
+  }
+  return [...new Set(raw.filter(Boolean))];
+}
+
 function ArchiveSaveModal({ entry, onClose }) {
   const [groups, setGroups] = useState(loadArchiveGroups);
   const [selGroup, setSelGroup] = useState(groups[0] || "기본");
@@ -4570,6 +4661,8 @@ function ArchiveSaveModal({ entry, onClose }) {
     const item = { id: `arc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, ts: Date.now(), group: selGroup, memo, modeId: entry.modeId, modeName: entry.modeName, modeIcon: entry.modeIcon, title: entry.title || "무제", payload: enrichedPayload };
     items.unshift(item);
     saveArchive(items);
+    const ideasToStack = extractIdeasFromArchivePayload(entry.modeId, entry.payload);
+    if (ideasToStack.length) addToIdeaStack(ideasToStack);
     onClose(true);
   };
   return (
