@@ -57,7 +57,7 @@ import {
 import { STYLES } from "./styles.js";
 
 // ─── 앱 업데이트 시점 (코드 수정 시 반드시 갱신) ───
-const LAST_UPDATED = "2026-04-06 16:17 KST";
+const LAST_UPDATED = "2026-04-06 16:24 KST";
 
 const MODE_TAGLINES = {
   tournament: [
@@ -6311,7 +6311,7 @@ function useBackgroundTasks() {
   const completeTask = useCallback((modeId, title) => {
     setTasks((prev) => ({ ...prev, [modeId]: "done" }));
     const mode = MODES.find((m) => m.id === modeId) || EXTRA_MODE_LABELS[modeId];
-    setToast({ modeId, text: `${mode?.icon || "✓"} ${mode?.name || modeId} 완료 — ${title || "결과 확인하기"}` });
+    setToast({ modeId, icon: mode?.icon || "✓", modeName: mode?.name || modeId, title: title || "결과 확인하기" });
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     toastTimerRef.current = setTimeout(() => {
       setToast(null);
@@ -6782,10 +6782,13 @@ export default function App() {
           </CreditContext.Provider>
           {archiveSaveEntry && <ArchiveSaveModal entry={archiveSaveEntry} onClose={(saved) => { setArchiveSaveEntry(null); if (saved) alert("아카이브에 저장되었습니다"); }} />}
           {bgTasks.toast && (
-            <div className="toast-alert" onClick={() => { const modeId = bgTasks.toast.modeId; bgTasks.setToast(null); navigateTo(modeId); }}>
-              <span style={{ fontSize: 18 }}>✅</span>
-              <span>{bgTasks.toast.text}</span>
-              <span style={{ fontSize: 11, opacity: 0.7, marginLeft: 6 }}>탭하여 이동 →</span>
+            <div className="toast-alert" onClick={() => { const modeId = bgTasks.toast.modeId; bgTasks.setToast(null); navigateTo(modeId); }} role="alert">
+              <span className="toast-alert-icon">✅</span>
+              <div className="toast-alert-body">
+                <div className="toast-alert-label">{bgTasks.toast.icon} {bgTasks.toast.modeName} 완료</div>
+                <div className="toast-alert-title">{bgTasks.toast.title}</div>
+              </div>
+              <span className="toast-alert-nav" aria-hidden="true">→</span>
             </div>
           )}
           <AppToastRenderer />

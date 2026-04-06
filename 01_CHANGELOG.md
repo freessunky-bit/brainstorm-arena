@@ -4,6 +4,32 @@
 
 ---
 
+## 2026-04-06 #33 — 백그라운드 완료 토스트 카드 UI 전면 재설계 (모바일 최적화)
+
+### 변경
+
+#### ① 토스트 레이아웃 2줄 카드 구조로 재설계
+- 기존: 아이콘 + 긴 단일 텍스트("모드 완료 — 타이틀") → 모바일에서 어색한 줄바꿈
+- 변경: 아이콘 서클 + **상단 라벨** (모드명 완료, 11px) + **하단 타이틀** (13.5px bold, ellipsis 처리) + → 화살표
+- `setToast`에 `{ icon, modeName, title }` 필드 분리 저장 (단일 문자열 → 구조화)
+
+#### ② CSS 모바일 최적화
+- `left: 50%; transform: translateX(-50%)` → `left: 16px; right: 16px; max-width: 400px; margin: 0 auto` (모바일 전폭 활용)
+- `bottom: max(28px, env(safe-area-inset-bottom) + 16px)` — 노치/홈바 기기 safe-area 대응
+- 배경 `#1a1a2e` 다크 카드 + 반투명 blur + 미세 테두리 (glass-morphism 감성)
+- 아이콘 영역: 36×36 초록 라운드 박스 (`border-radius: 12px`)
+- `:active { transform: scale(0.97) }` 터치 피드백
+- `.toast-alert-title`: `white-space: nowrap; overflow: hidden; text-overflow: ellipsis` — 긴 제목 자동 말줄임
+
+#### ③ `app-toast` 애니메이션 이름 충돌 수정
+- `@keyframes toastIn` 중복 → `.app-toast`용 `@keyframes appToastIn`으로 분리
+
+### 파일 변경
+- `src/App.jsx` — `completeTask` toast 데이터 구조화, toast JSX 재설계, LAST_UPDATED 갱신
+- `src/styles.js` — `.toast-alert` 전면 재작성, `.toast-alert-icon/body/label/title/nav` 신규 클래스, `appToastIn` keyframe
+
+---
+
 ## 2026-04-06 #32 — 웹앱 프롬프트 생성 결과 분석히스토리 저장 · 아카이브 프롬프트 이력 뷰어 · CSS 히스토리 버튼 스타일
 
 ### 변경
