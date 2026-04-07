@@ -4,7 +4,31 @@
 
 ---
 
-## 2026-04-07 #39 — App.jsx 인라인 프롬프트 → prompts.js 빌더 함수로 전면 교체
+## 2026-04-07 #39-b — API 기능 문서화 · 프롬프트 스크립트 분리 · 하네스 엔지니어링 지침 CLAUDE.md 분리
+
+### 변경
+
+#### 신규 파일
+- `02_API_FEATURES.md` 생성: 전체 12개 메뉴 + 리포트 애드온의 API 호출 기능 리스트, 프롬프트 빌더 함수 매핑, 프로바이더·레이트 리미터 정보 문서화
+- `CLAUDE.md` 생성: 하네스 엔지니어링 지침을 독립 파일로 분리, Claude Code 매 작업 시 자동 로드 (복잡 버그 절차·fallback 금지·한국어 원칙·체크리스트 포함)
+
+#### 리팩토링
+- `src/prompts.js`: 인라인 AI 프롬프트 27개를 `buildXxx()` 빌더 함수로 분리·export (유저가 직접 편집 가능한 스크립트로 독립)
+- `src/App.jsx`: `prompts.js` 빌더 함수 import 블록 추가 (실제 교체는 #39-a에서 완료)
+
+#### 문서 갱신
+- `00_PROJECT_GUIDE.md`: 섹션 10 추가 (CLAUDE.md 자동 반영 구조 명기), 폴더 구조에 `02_API_FEATURES.md`·`CLAUDE.md` 추가
+
+### 파일 변경
+- `02_API_FEATURES.md` (신규)
+- `CLAUDE.md` (신규)
+- `src/prompts.js` — 빌더 함수 27개 추가 (L551~696)
+- `src/App.jsx` — import 블록 갱신
+- `00_PROJECT_GUIDE.md` — 섹션 10 추가, 폴더 구조 업데이트
+
+---
+
+## 2026-04-07 #39-a — App.jsx 인라인 프롬프트 → prompts.js 빌더 함수로 전면 교체
 
 ### 변경
 
