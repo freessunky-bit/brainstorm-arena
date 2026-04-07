@@ -25,6 +25,8 @@
 brainstrom/
 ├── 00_PROJECT_GUIDE.md   ← 이 문서 (프로젝트 가이드)
 ├── 01_CHANGELOG.md       ← 변경 이력
+├── 02_API_FEATURES.md    ← API 호출 기능 전체 리스트
+├── CLAUDE.md             ← 하네스 엔지니어링 지침 (Claude Code 자동 반영)
 ├── index.html            ← Vite 진입점 (dev server용)
 ├── package.json          ← 의존성 (react, react-dom, vite)
 ├── vite.config.js        ← Vite 설정 (dev: base="/", build: base="./")
@@ -269,10 +271,22 @@ const LAST_UPDATED = "YYYY-MM-DD HH:MM KST";
 
 ---
 
-## 10. 향후 확장 방향 (참고)
+## 10. 하네스 엔지니어링 지침 (자동 반영)
+
+> **AI 에이전트 작업 규칙은 `CLAUDE.md`에 별도 관리됩니다.**
+> Claude Code는 매 작업 시작 시 `CLAUDE.md`를 자동으로 읽으므로,
+> 지침을 변경하려면 `CLAUDE.md` 파일을 수정하세요.
+>
+> - `CLAUDE.md` — 하네스 엔지니어링 지침 (복잡 버그 절차, fallback 금지, 체크리스트 등)
+> - `02_API_FEATURES.md` — API 호출 기능 전체 리스트
+> - `src/prompts.js` — AI 프롬프트 편집 가능 스크립트 (유저 프롬프트 빌더 함수 포함)
+
+---
+
+## 11. 향후 확장 방향 (참고)
 
 - 히스토리 JSON 내보내기/가져오기
 - 다크 모드
 - 토너먼트 라운드별 실시간 진행 애니메이션
 - 다국어 지원 (현재 한국어 only)
-- 파일 분리 리팩토링 (컴포넌트 단위)
+- 파일 분리 리팩토링 (컴포넌트 단위) — `02_API_FEATURES.md` 참조
