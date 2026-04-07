@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-04-07 #39 — App.jsx 인라인 프롬프트 → prompts.js 빌더 함수로 전면 교체
+
+### 변경
+
+#### 리팩토링
+- App.jsx의 모든 인라인 AI 프롬프트 문자열(27개)을 `src/prompts.js` 빌더 함수 호출로 교체
+- 교체 대상: MultiAnalysis, Synthesis, DeepAnalysis, Tournament(Match/FinalReport), DevilAdvocate, Scamper, DnaMap(+Fallback), MarketValidation(+Fallback), CompeteScan, RefhubSearch, RefhubMore, MixWheel, MixReport, TotBranch, TotEval, TotSolution, PrototyperSynth, CompetitorMap, ExpertSearch, InvestorSearch, QuantumSim, FactCheck, RefineCopilot, DocumentSummary
+- 프롬프트 수정 시 `src/prompts.js`만 편집하면 전체 반영
+
+### 파일 변경
+- `src/App.jsx`: 인라인 프롬프트 → 빌더 함수 호출 교체, LAST_UPDATED 갱신
+- `src/prompts.js`: 변경 없음 (빌더 함수는 이전 커밋에서 이미 추가됨)
+
+---
+
 ## 2026-04-07 #38 — 웹앱 프로토타이퍼: PROJECT_GUIDE.md 자동 생성 탭 추가
 
 ### 변경

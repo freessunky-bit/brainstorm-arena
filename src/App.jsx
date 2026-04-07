@@ -86,7 +86,7 @@ import {
 import { STYLES } from "./styles.js";
 
 // ─── 앱 업데이트 시점 (코드 수정 시 반드시 갱신) ───
-const LAST_UPDATED = "2026-04-06 16:39 KST";
+const LAST_UPDATED = "2026-04-07 17:00 KST";
 
 const MODE_TAGLINES = {
   tournament: [
@@ -1542,7 +1542,7 @@ function MultiPerspective({ personas, globalKey, utilProvider, utilModel, utilAp
     if (!spend("analyze")) return; notifyStart(); addToFeedbackStack(fb); setRunning(true); setResults({}); setSynthesis(""); setDeepStep(-1); setDeepResults([]); setStreamingIds(new Set()); setSynthStreaming(false);
     const tInfo = formatTargetForPrompt(target);
     const ns = {}; const active = personas.filter(p => sel.includes(p.id)); active.forEach(p => { ns[p.id] = "loading"; }); setStatus({ ...ns });
-    const prompt = `다음 아이디어를 당신의 전문 분야 관점에서 **세계 최고 수준으로** 분석해주세요.\n\n**아이디어:** ${idea}${formatOptionalDirectionFb(fb)}${formatIdeaContext(ideaContext)}${tInfo}\n\n아래 구조를 반드시 따르세요:\n\n## 1. Executive Summary\n한 문단으로 핵심 판정 (Go/No-Go/Pivot 추천 + 핵심 근거)\n\n## 2. 기회 분석 (Why Now?)\n시장 타이밍, 기술 성숙도, 사회적 변화, 규제 환경이 왜 지금 이 아이디어에 유리한지\n\n## 3. 강점 · 차별적 우위\n경쟁 대비 10x 개선 포인트, 방어 가능한 moat, 네트워크 효과 가능성\n\n## 4. 리스크 · 약점 (Kill Zone 포함)\n빅테크 진입 위험, 규제 리스크, 기술 리스크, 시장 채택 장벽을 구체적으로\n\n## 5. 성공을 위한 핵심 조건 (Must-Have)\n이 아이디어가 성공하려면 반드시 충족해야 할 3가지 전제 조건\n\n## 6. 실행 제안\n즉시 검증해야 할 가설 TOP 3 + 최소 MVP 정의 + 초기 타깃 고객 프로필\n\n${MULTI_ANALYSIS_SUFFIX}`;
+    const prompt = buildMultiAnalysisPrompt(idea, fb, ideaContext, tInfo, formatOptionalDirectionFb, formatIdeaContext);
     const ar = {};
     await Promise.all(active.map(async persona => {
       try {
@@ -1558,7 +1558,7 @@ function MultiPerspective({ personas, globalKey, utilProvider, utilModel, utilAp
     }));
     let synthesisText = "";
     try {
-      const sp = `아래는 세계 최고 수준의 전문가 패널이 각자 관점에서 분석한 결과입니다.\n\n${Object.entries(ar).map(([id, r]) => { const p = personas.find(x => x.id === id); return `=== ${p?.name} ===\n${r}`; }).join("\n\n")}\n\n위 전문가 의견을 종합하여 아래 프레임워크로 **최종 투자 심사 리포트**를 작성하세요:\n\n## 1. 종합 판정 (Go / No-Go / Pivot)\n확신도(0-100%)와 함께 근거 2-3줄\n\n## 2. 전문가 합의 인사이트 TOP 5\n모든 전문가가 공통으로 지적한 기회와 리스크\n\n## 3. 전문가 간 의견 충돌\n서로 엇갈린 포인트 + 어느 쪽이 더 타당한지 판정\n\n## 4. 검증 로드맵 (30일/90일/180일)\n즉시 실행할 가설 검증, MVP 실험, 시장 테스트 단계\n\n## 5. 리소스 · 팀 구성\n필요 핵심 인력, 초기 자금 규모, 기술 스택\n\n## 6. 최대 리스크와 대응 전략\n이 아이디어를 죽일 수 있는 시나리오 3가지 + 각 대응\n\n한국어로 작성하세요.`;
+      const sp = buildSynthesisPrompt(ar, personas);
       const sp2 = pickUsablePersona(personas, globalKey);
       setSynthStreaming(true);
       synthesisText = await callAIStream(sp2, [{ role: "user", content: sp }], undefined, (_chunk, full) => {
@@ -1575,17 +1575,10 @@ function MultiPerspective({ personas, globalKey, utilProvider, utilModel, utilAp
     const deepArr = [];
     if (deep) {
       const prevAll = `멀티 관점 종합:\n${synthesisText}`;
-      const deepPrompts = [
-        `원본 아이디어: "${idea}"\n이전 분석:\n${prevAll}${formatOptionalDirectionFb(fb)}${formatIdeaContext(ideaContext)}\n\nSCAMPER 7축으로 **실행 가능한 파생 비즈니스**를 생성하세요.\n\n각 축마다:\n- 파생 아이디어 2-3개 (구체적 제품/서비스명 수준)\n- 각 아이디어의 타깃 고객과 예상 TAM\n- 실제 성공 레퍼런스 (유사하게 SCAMPER를 적용한 기업)\n\n축: Substitute(대체), Combine(결합), Adapt(적용), Modify(변형), Put to other uses(전용), Eliminate(제거), Reverse(역전)\n한국어로.`,
-        `원본 아이디어: "${idea}"\n이전 분석:\n${prevAll}${formatOptionalDirectionFb(fb)}${formatIdeaContext(ideaContext)}\n\n**구조화된 Pre-mortem 분석**을 수행하세요:\n\n## 사망 선고서\n이 스타트업이 2년 후 문을 닫았습니다. 부검 결과를 작성하세요.\n\n## 치명적 실패 원인 TOP 5\n각 원인별: 발생 확률(%), 임팩트(상/중/하), 발생 시점(개월), 조기 경고 신호\n\n## Kill Zone 분석\nFAANG·국내 빅테크가 이 영역에 진입할 가능성과 대응 전략\n\n## 규제·법률 지뢰\n개인정보보호, 산업규제, 지적재산권 리스크\n\n## 생존 처방전\n각 실패 원인별 구체적 대응 전략 + 피봇 옵션\n\n한국어로.`,
-        `원본 아이디어: "${idea}"\n이전 분석:\n${prevAll}${formatOptionalDirectionFb(fb)}${formatIdeaContext(ideaContext)}\n\n**투자급 시장 검증 리포트**를 작성하세요:\n\n## TAM → SAM → SOM (보텀업)\n구체적 수치와 산출 근거. 유사 시장 벤치마크 3개 이상\n\n## 경쟁 매핑\n직접 경쟁 3개, 간접 경쟁 3개, 잠재 진입자 2개. 각 사의 약점=우리의 기회\n\n## 차별화 매트릭스\n경쟁사 대비 10x 개선 포인트를 구체적 수치로\n\n## GTM 전략\n초기 Beachhead 시장 → 확장 경로. 채널별 CAC 추정. 바이럴 루프 설계\n\n## 가격 전략\n가격 책정 모델, 비교 가격 분석, 마진 구조\n\n한국어로.`,
-        `원본 아이디어: "${idea}"\n전체 분석:\n${prevAll}\n${deepArr.map(d => `\n=== ${d.name} ===\n${d.content}`).join("")}${formatOptionalDirectionFb(fb)}${formatIdeaContext(ideaContext)}\n\n**VC 투자 심사 수준의 최종 액션 플랜**을 작성하세요:\n\n## 최종 판정 (Go / No-Go / Pivot)\n확신도(0-100%) + 핵심 근거 + 비교 가능한 성공 사례\n\n## 핵심 인사이트 TOP 5\n전체 분석에서 도출된 가장 중요한 발견\n\n## 30일 스프린트\n즉시 검증할 핵심 가설 3개 + 검증 방법 + 성공 기준(KPI)\n\n## 90일 로드맵\nMVP 정의, 초기 유저 확보 전략, 핵심 메트릭\n\n## 180일 마일스톤\n제품-시장 적합성 증명, 시리즈A 준비 조건\n\n## 팀 구성 · 자금\n필요 핵심 인력 (직무/연차), 초기 자금 규모, 번 레이트\n\n## 최대 리스크와 대응\n프로젝트를 죽일 수 있는 시나리오 3개 + 각 대응 전략\n\n한국어로.`,
-      ];
       for (let i = 0; i < DEEP_STEPS.length; i++) {
         setDeepStep(i);
-        const actualPrompt = i === 3
-          ? `원본 아이디어: "${idea}"\n전체 분석:\n${prevAll}\n${deepArr.map(d => `\n=== ${d.name} ===\n${d.content}`).join("")}${formatOptionalDirectionFb(fb)}${formatIdeaContext(ideaContext)}\n\n**VC 투자 심사 수준의 최종 액션 플랜**을 작성하세요:\n\n## 최종 판정 (Go / No-Go / Pivot)\n확신도(0-100%) + 핵심 근거 + 비교 가능한 성공 사례\n\n## 핵심 인사이트 TOP 5\n## 30일 스프린트\n즉시 검증할 핵심 가설 3개 + 검증 방법 + 성공 기준\n\n## 90일 로드맵\nMVP 정의, 초기 유저 확보, 핵심 메트릭\n\n## 180일 마일스톤\n## 팀 구성 · 자금\n## 최대 리스크와 대응\n\n한국어로.`
-          : deepPrompts[i];
+        const deepPrompts = buildDeepAnalysisPrompts(idea, prevAll, fb, ideaContext, deepArr, formatOptionalDirectionFb, formatIdeaContext);
+        const actualPrompt = deepPrompts[i];
         try {
           const p = pickUsablePersona(personas, globalKey);
           const entry = { step: i, key: DEEP_STEPS[i].key, name: DEEP_STEPS[i].name, icon: DEEP_STEPS[i].icon, content: "", _streaming: true };
@@ -2005,7 +1998,7 @@ function IdeaStackPopover({ onSelect, onClose, personas, globalKey, utilProvider
       if (!rawText.trim()) { setUploading(""); alert("문서에서 텍스트를 추출할 수 없습니다."); return; }
       if (persona?.apiKey) {
         setUploading(`🤖 AI로 아이디어 요약 중...`);
-        const summary = await callAI(persona, [{ role: "user", content: `아래는 업로드된 ${ext?.toUpperCase()} 문서의 텍스트입니다. 이 내용에서 핵심 비즈니스 아이디어, 컨셉, 기획 요소를 추출하여 한국어로 간결하게 정리해 주세요. 아이디어 입력에 바로 사용할 수 있는 형태로.\n\n---\n${rawText.slice(0, 8000)}` }]);
+        const summary = await callAI(persona, [{ role: "user", content: buildDocumentSummaryPrompt(ext, rawText) }]);
         onSelect(summary);
       } else {
         showAppToast("🔑 API 키가 없어 AI 요약 없이 원문 텍스트로 가져옵니다. ⚙️ 설정에서 API 키를 입력하면 AI 요약이 가능합니다.", "warn", 5000);
@@ -2307,7 +2300,7 @@ function Tournament({ personas, globalKey, utilProvider, utilModel, utilApiKey, 
         let jsonResults = [];
         if (realMatches.length > 0) {
           const tInfo = formatTargetForPrompt(target);
-          const matchPrompt = `토너먼트 라운드: **${name}**\n컨텍스트: ${ctx || "성공 확률이 가장 높은 아이디어 선별"}${formatOptionalDirectionFb(fb)}${tInfo}\n\n${realMatches.map(([a, b], i) => `Match ${i + 1}:\nA: ${a}\nB: ${b}`).join("\n\n")}\n\n위 ${realMatches.length}개 대결 각각에 대해 system 지침대로 JSON 한 줄씩 출력하세요. 총 ${realMatches.length}줄.`;
+          const matchPrompt = buildTournamentMatchPrompt(name, ctx, fb, tInfo, realMatches, formatOptionalDirectionFb);
           const r = await callAI(p, [{ role: "user", content: matchPrompt }], TOURNAMENT_MATCH_SYSTEM);
           const allLines = r.split("\n").map((l) => l.trim()).filter(Boolean);
           const tryParseJson = (s) => { try { return JSON.parse(s); } catch { const i2 = s.indexOf("{"); const j2 = s.lastIndexOf("}"); if (i2 >= 0 && j2 > i2) try { return JSON.parse(s.slice(i2, j2 + 1)); } catch {} return null; } };
@@ -2391,7 +2384,7 @@ function Tournament({ personas, globalKey, utilProvider, utilModel, utilApiKey, 
     try {
       const p = mainPersona;
       setSrStreaming(true);
-      finalReport = await callAIStream(p, [{ role: "user", content: `**토너먼트 최종 투자 심사 리포트**\n컨텍스트: ${ctx || "성공 확률이 가장 높은 아이디어"}${formatOptionalDirectionFb(fb)}\n\n${top3.slice(0, 3).map((x, i) => `${i + 1}위: ${x}`).join("\n")}\n\n## 1. 순위 판정 근거\n각 아이디어가 해당 순위를 받은 핵심 이유. 5개 평가 축별 결정적 차이.\n\n## 2. 🥇 1위 아이디어 — 투자 제안서\n### Why Now?\n시장 타이밍, 기술 성숙도, 규제 환경이 왜 지금 유리한지\n### 실행 로드맵\n- 30일: 핵심 가설 검증 (실험 방법 + 성공 기준)\n- 90일: MVP + 초기 사용자 100명 확보\n- 180일: PMF 증명 + 시리즈A 준비\n- 12개월: 스케일링 전략\n### 유닛 이코노믹스\nLTV:CAC 비율, 페이백 기간, 그로스 마진 추정\n### 팀 구성 · 초기 자금\n핵심 인력(직무/연차), 필요 시드 자금, 번 레이트\n### Kill Risk & 대응\n이 아이디어를 죽일 수 있는 시나리오 3가지 + 대응\n\n## 3. 🥈🥉 차순위 아이디어 활용\n피봇 가능성, 1위와의 시너지, 독립 추진 시 조건\n\n## 4. GTM 전략\nBeachhead 시장 → 확장 경로. 채널별 예상 CAC.\n\n실제 유니콘·상장사 레퍼런스를 반드시 포함하세요.\n한국어로 작성.` }], undefined, (_chunk, full) => {
+      finalReport = await callAIStream(p, [{ role: "user", content: buildTournamentFinalReportPrompt(ctx, fb, top3, formatOptionalDirectionFb) }], undefined, (_chunk, full) => {
         setSr(full);
       });
       setSr(finalReport);
@@ -2804,7 +2797,7 @@ function DevilsAdvocate({ personas, globalKey, utilProvider, utilModel, utilApiK
     let out = "";
     try {
       const d = personas.find(p => p.id === "devil") || personas[0]; const p = withResolvedApiKey(d, globalKey);
-      out = await callAIStream(p, [{ role: "user", content: `당신은 1,000개 이상의 스타트업 실패를 분석한 Pre-mortem 전문가입니다.\n이 아이디어는 **이미 실패했습니다.** 부검을 수행하세요.\n\n**아이디어:** ${idea}${formatOptionalDirectionFb(fb)}${formatIdeaContext(ideaContext)}${tInfo}\n\n## 💀 사망 선고서\n실패 일시, 누적 투자금, 최대 도달 사용자 수를 가정하고 실패 경위를 서술하세요.\n\n## ⚠️ 치명적 실패 원인 TOP 5\n각 원인별: 발생 확률(%), 시점(개월 후), 조기 경고 신호, 유사 실패 기업 사례\n\n## 🏢 Kill Zone 분석\nGoogle, Apple, Meta, Amazon, 네이버, 카카오가 동일 영역 진입 시 시나리오. 방어 가능성 0-100%.\n\n## 🔥 최악의 시나리오 3가지\n각각: 트리거 이벤트 → 연쇄 반응 → 최종 결과\n\n## ⚖️ 규제 · 법률 지뢰밭\n개인정보, 산업규제, 라이선스, 지적재산권, 국경간 규제 리스크\n\n## 🛡️ 생존 필수 조건\n이 아이디어가 살아남으려면 **반드시** 충족해야 할 5가지 전제 조건\n\n## 💊 처방전 + 피봇 옵션\n각 실패 원인별 구체적 대응 전략. 원래 아이디어가 안 되면 가능한 피봇 방향 2가지.\n\n실제 실패한 기업 사례(CB Insights 스타트업 실패 사유 데이터 참조)를 반드시 포함.\n한국어로.` }], undefined, (_chunk, full) => { setResult(full); });
+      out = await callAIStream(p, [{ role: "user", content: buildDevilAdvocatePrompt(idea, fb, ideaContext, tInfo, formatOptionalDirectionFb, formatIdeaContext) }], undefined, (_chunk, full) => { setResult(full); });
       setResult(out);
     } catch (err) { out = `오류: ${err.message}`; setResult(out); }
     setResultStreaming(false); setRunning(false);
@@ -2927,14 +2920,7 @@ function ScamperMode({ personas, globalKey, utilProvider, utilModel, utilApiKey 
     let snapshot = {};
     try {
       const p = pickUsablePersona(personas, globalKey);
-      const prompt =
-        `아이디어: "${idea}"${formatOptionalDirectionFb(fb)}${formatIdeaContext(ideaContext)}${tInfo}\n\nSCAMPER 기법을 **실전 비즈니스 전략** 수준으로 적용하세요.\n\n` +
-        `각 축마다:\n1. **파생 아이디어 2-3개** — 단순 변형이 아닌, 실제 론칭 가능한 제품/서비스 수준으로 구체적으로\n` +
-        `2. **벤치마크** — 해당 SCAMPER를 실제로 적용해 성공한 기업 사례 (있다면)\n` +
-        `3. **예상 타깃 · 시장 규모** — 각 파생 아이디어의 초기 타깃 고객층과 TAM 추정\n\n` +
-        `반드시 아래 7개 축을 빠짐없이 쓰고, 각 축은 새 줄에서 다음 중 하나 형태로 시작하세요 (대문자 한 글자 S,C,A,M,P,E,R 만):\n` +
-        `예: **S - 대체:** 또는 ### S - Substitute\n\n` +
-        `${SCAMPER_AXES.map((a) => `### ${a.key} - ${a.name} (${a.desc})`).join("\n")}\n\n한국어로 답하세요.`;
+      const prompt = buildScamperPrompt(idea, fb, ideaContext, tInfo, SCAMPER_AXES, formatOptionalDirectionFb, formatIdeaContext);
       const r = await callAIStream(p, [{ role: "user", content: prompt }], undefined, (_chunk, full) => {
         setStreamText(full);
       }, { maxTokens: 8000 });
@@ -3024,21 +3010,7 @@ function DNAMap({ personas, globalKey, utilProvider, utilModel, utilApiKey }) {
     let snapshot = null;
     try {
       const p = pickUsablePersona(personas, globalKey);
-      const dnaUser = `아래 아이디어 목록을 분석합니다.${formatOptionalDirectionFb(fb)}${formatIdeaContext(ideaContext)}${tInfo}
-
-[목록]
-${ideas}
-
-다음을 수행하세요.
-1) 의미가 비슷한 아이디어를 3~5개 클러스터로 묶기
-2) 클러스터별 키워드
-3) 블루오션(틈새) 후보 3개 이상
-4) 시너지가 나는 조합 2~3개
-
-출력: **JSON 한 덩어리만** (앞뒤 설명·코드펜스 금지).
-스키마의 **영문 키**는 그대로 두고, **모든 문자열 값**(name, ideas 배열 원소, keywords, area, suggestion, reason, synergies의 ideas·combined·power)은 **반드시 한국어**로만 채우세요. 영어 문장을 넣지 마세요.
-
-{"clusters":[{"name":"한국어 클러스터명","color":"#3182f6","ideas":["한국어"],"keywords":["한국어"]}],"blueOceans":[{"area":"한국어","suggestion":"한국어","reason":"한국어"}],"synergies":[{"ideas":["한국어","한국어"],"combined":"한국어","power":"한국어"}]}`;
+      const dnaUser = buildDnaMapPrompt(ideas, fb, ideaContext, tInfo, formatOptionalDirectionFb, formatIdeaContext);
       const r = await callAI(p, [{ role: "user", content: dnaUser }], DNA_MAP_SYSTEM);
       snapshot = safeParseJsonText(r);
       if (!snapshot) throw new Error("DNA 맵 JSON 파싱 실패");
@@ -3048,7 +3020,7 @@ ${ideas}
         const p2 = pickUsablePersona(personas, globalKey);
         const t = await callAI(
           p2,
-          [{ role: "user", content: `아래 아이디어에 대해 클러스터·블루오션·시너지를 분석하세요. 제목·본문·불릿 **전부 한국어**만 사용하세요. 영어 단락이나 영어 소제목을 쓰지 마세요.${formatOptionalDirectionFb(fb)}${formatIdeaContext(ideaContext)}\n\n${ideas}` }],
+          [{ role: "user", content: buildDnaMapFallbackPrompt(ideas, fb, ideaContext, formatOptionalDirectionFb, formatIdeaContext) }],
           DNA_MAP_SYSTEM
         );
         snapshot = { text: t };
@@ -3101,7 +3073,7 @@ function MarketValidation({ personas, globalKey, utilProvider, utilModel, utilAp
     if (!spend("market")) return; notifyStart(); addToFeedbackStack(fb); setRunning(true); setResult(""); setResultStreaming(true);
     const tInfo = formatTargetForPrompt(target);
     let out = "";
-    const marketPrompt = `**투자 심사급 시장 검증 리포트**를 작성하세요.\n\n**아이디어:** ${idea}${formatOptionalDirectionFb(fb)}${formatIdeaContext(ideaContext)}${tInfo}\n\n웹 검색을 최대한 활용하여 아래 구조로 분석하세요:\n\n## 1. 시장 규모 (TAM → SAM → SOM)\n보텀업 산출 방식으로 구체적 수치. 출처 명시. CAGR 포함.\n\n## 2. 경쟁 환경 매핑\n직접 경쟁 3-5개(각 사의 펀딩/매출/사용자 수), 간접 경쟁 3개, 잠재 빅테크 진입 가능성\n\n## 3. 최신 산업 트렌드 (2024-2025)\n이 시장에 영향을 미치는 기술·규제·소비자 행동 변화\n\n## 4. 성공 · 실패 사례 분석\n유사 분야 성공 기업의 핵심 성공 요인 + 실패 기업의 사망 원인\n\n## 5. 차별화 기회\n기존 경쟁사가 놓치고 있는 Unmet Need, 가치 곡선 분석\n\n## 6. Go-to-Market 전략\nBeachhead 시장 선정 → 채널 전략 → CAC 추정 → 확장 경로\n\n## 7. 투자 매력도\n이 시장에 VC가 투자하는 이유/하지 않는 이유. 최근 관련 펀딩 딜.\n\n한국어로.`;
+    const marketPrompt = buildMarketValidationPrompt(idea, fb, ideaContext, tInfo, formatOptionalDirectionFb, formatIdeaContext);
     try {
       const investorPersona = personas.find((pp) => pp.id === "investor") || personas.find((pp) => pp.provider === "claude") || personas[0];
       const ak = withResolvedApiKey(investorPersona, globalKey).apiKey;
@@ -3136,7 +3108,7 @@ function MarketValidation({ personas, globalKey, utilProvider, utilModel, utilAp
       try {
         const p = pickUsablePersona(personas, globalKey);
         if (!p?.apiKey) throw new Error("API 키가 설정되지 않았습니다. 설정(⚙️)에서 API 키를 입력해 주세요.");
-        out = await callAIStream(p, [{ role: "user", content: `**투자 심사급 시장 분석** (지식 기반):\n\n아이디어: ${idea}${formatOptionalDirectionFb(fb)}${formatIdeaContext(ideaContext)}${tInfo}\n\n## 1. TAM/SAM/SOM (보텀업 추정)\n## 2. 경쟁 매핑 (직접 3개 + 간접 3개 + 빅테크 진입 가능성)\n## 3. 차별화 기회 (Unmet Need, 가치 곡선)\n## 4. 리스크 (시장/기술/규제/경쟁)\n## 5. GTM 전략 (Beachhead → 확장 경로)\n## 6. 투자 매력도 판정\n\n실제 기업·시장 레퍼런스를 반드시 포함하세요. 한국어로.` }], undefined, (_chunk, full) => { setResult(full); });
+        out = await callAIStream(p, [{ role: "user", content: buildMarketFallbackPrompt(idea, fb, ideaContext, tInfo, formatOptionalDirectionFb, formatIdeaContext) }], undefined, (_chunk, full) => { setResult(full); });
         if (!out || !out.trim()) throw new Error("AI 응답이 비어있습니다. 잠시 후 다시 시도해 주세요.");
         setResult(out);
       } catch (e2) { out = `오류: ${e2.message}`; setResult(out); }
@@ -3173,7 +3145,7 @@ function CompeteScan({ personas, globalKey, utilProvider, utilModel, utilApiKey 
     try {
       const base = personas.find(pp => pp.id === "compete") || personas[0];
       const p = withResolvedApiKey(base, globalKey);
-      out = await callAIStream(p, [{ role: "user", content: `당신은 CB Insights·Crunchbase·PitchBook 데이터를 기반으로 경쟁 환경을 분석하는 전문 애널리스트입니다.\n\n**아이디어:** ${idea}${formatOptionalDirectionFb(fb)}${formatIdeaContext(ideaContext)}${tInfo}\n\n아래 구조로 **유사 제품·서비스·플랫폼**을 빠짐없이 탐색하세요:\n\n## 1. 직접 경쟁사 (5~10개)\n각 서비스별:\n- **이름** · 웹사이트 URL\n- 한 줄 설명\n- 펀딩 규모 / 추정 매출 / 사용자 수\n- 핵심 차별점\n- 약점 (우리가 공략 가능한 포인트)\n\n## 2. 간접 경쟁사 (3~5개)\n유사한 니즈를 다른 방식으로 해결하는 서비스\n\n## 3. 글로벌 벤치마크\n해외에서 성공한 유사 모델 (특히 미국·중국·유럽)\n\n## 4. 최근 진입자 & 트렌드\n최근 1-2년 내 신규 진입한 경쟁자, 시장 트렌드 변화\n\n## 5. 빅테크 위협 분석\nGoogle/Apple/Meta/Amazon/네이버/카카오의 동일 영역 진출 가능성\n\n## 6. 경쟁 우위 전략 제안\n이 경쟁 환경에서 차별화할 수 있는 구체적 전략 3가지\n\n실제 존재하는 기업·서비스명을 사용하세요. 한국어로 답변.` }], undefined, (_chunk, full) => { setResult(full); });
+      out = await callAIStream(p, [{ role: "user", content: buildCompeteScanPrompt(idea, fb, ideaContext, tInfo, formatOptionalDirectionFb, formatIdeaContext) }], undefined, (_chunk, full) => { setResult(full); });
       setResult(out);
     } catch (err) { out = `오류: ${err.message}`; setResult(out); }
     setResultStreaming(false); setRunning(false);
@@ -3212,8 +3184,8 @@ function ReferenceHub({ personas, globalKey, utilProvider, utilModel, utilApiKey
       const base = personas.find(pp => pp.id === "refhub") || personas[0];
       const p = withResolvedApiKey(base, globalKey);
       const prompt = isMore
-        ? `이전에 추천한 레퍼런스: ${existing}\n\n아이디어: "${idea}"${formatOptionalDirectionFb(fb)}${formatIdeaContext(ideaContext)}${tInfo}\n\n위 목록과 **중복되지 않는** 새로운 레퍼런스 20개를 추가로 발굴하세요. 이전과 같은 JSON 배열 형식으로만 응답.`
-        : `당신은 세계 최고의 리서치 애널리스트입니다. 퍼플렉시티 수준의 깊이로 관련 레퍼런스를 발굴하세요.\n\n**아이디어:** ${idea}${formatOptionalDirectionFb(fb)}${formatIdeaContext(ideaContext)}${tInfo}\n\n아래 카테고리별로 **총 20개** 레퍼런스를 찾아주세요:\n\n1. **관련 웹사이트·블로그** (5개) - 핵심 인사이트를 제공하는 사이트\n2. **커뮤니티** (5개) - Reddit, X(Twitter), 디시코드, Product Hunt, 네이버 카페, 오픈채팅 등\n3. **유튜브·팟캐스트** (5개) - 관련 콘텐츠 크리에이터, 채널\n4. **리서치·보고서** (5개) - 시장 리포트, 학술 자료, 뉴스레터\n\n각 항목:\n- title: 이름/제목\n- url: 가능한 실제 URL (모르면 검색 URL)\n- category: website/community/youtube/research 중 하나\n- desc: 왜 이 리소스가 유용한지 1-2줄\n- subscribers: 구독자/회원 수 (추정)\n\nJSON 배열로만 응답: [{title,url,category,desc,subscribers}]`;
+        ? buildRefhubMorePrompt(existing, idea, fb, ideaContext, tInfo, formatOptionalDirectionFb, formatIdeaContext)
+        : buildRefhubSearchPrompt(idea, fb, ideaContext, tInfo, formatOptionalDirectionFb, formatIdeaContext);
       const r = await callAI(p, [{ role: "user", content: prompt }]);
       const cleaned = r.replace(/```json|```/g, "").trim();
       let parsed = [];
@@ -3613,7 +3585,7 @@ function MixupRoulette({ personas, globalKey, mixProvider, mixModel, mixApiKey, 
 
     const tInfo = formatTargetForPrompt(target);
     const count = Math.min(30, Math.max(10, filledLeft.length * 5));
-    const prompt = `사용자 아이디어 파츠:\n${filledLeft.map((s, i) => `${i + 1}. ${s}`).join("\n")}${tInfo}\n\n위 아이디어 파츠들과 폭발적으로 결합될 수 있는 글로벌 최신 밈, 서브컬처, 틈새 트렌드, 신기술, 신규 비즈니스 모델 요소를 ${count}개 생성하세요.\n각 파츠는 2-8 단어의 짧고 임팩트 있는 한국어 문구로. 서로 중복되지 않아야 합니다.\nJSON만 반환: {"right_wheel_parts":["...",...]}\n배열 길이는 정확히 ${count}.`;
+    const prompt = buildMixWheelPrompt(filledLeft, tInfo, count);
 
     try {
       const r = await callAI(mix, [{ role: "user", content: prompt }], MIX_WHEEL_SYSTEM);
@@ -3648,7 +3620,7 @@ function MixupRoulette({ personas, globalKey, mixProvider, mixModel, mixApiKey, 
     setSaved(false);
 
     const tInfo = formatTargetForPrompt(target);
-    const prompt = `[좌측 아이디어]: ${selectedLeft}\n[우측 트렌드]: ${selectedRight}${tInfo}\n\n이 두 요소를 강제로 융합하여 독창적인 비즈니스 아이디어를 도출하세요.\n다음 JSON만 반환 (코드펜스·설명 금지):\n{\n  "combined_concept": "결합된 아이디어의 캐치한 한 줄 요약 (20자 내외, 한국어)",\n  "tagline": "서비스 슬로건 (15자 내외)",\n  "problem": "이 아이디어가 해결하는 핵심 문제와 타깃 고객의 페인포인트 (3-4문장)",\n  "value_proposition": "이 믹스업이 왜 시장에서 파괴적인 시너지를 내는지 분석. 기존 대안 대비 10x 개선 포인트, 네트워크 효과, 방어 가능한 해자(moat) 포함 (5-6문장)",\n  "target_market": "핵심 타깃 시장 정의. TAM/SAM/SOM 추정치, Why Now 타이밍 분석 (4-5문장)",\n  "business_model": "수익 모델(구독/트랜잭션/광고/하이브리드), 예상 ARPU, 가격 전략 (3-4문장)",\n  "execution_strategy": "당장 실행 가능한 MVP 정의와 4단계 로드맵. 각 단계별 기간·목표·핵심 메트릭 포함 (6-8문장)",\n  "risk_and_moat": "핵심 리스크 3가지와 각 대응 전략, 경쟁 방어 전략 (4-5문장)",\n  "reference": "유사한 접근으로 성공한 기업/서비스 2-3개와 우리와의 차별점 (3-4문장)"\n}`;
+    const prompt = buildMixReportPrompt(selectedLeft, selectedRight, tInfo);
 
     try {
       const r = await callAI(mix, [{ role: "user", content: prompt }], MIX_REPORT_SYSTEM);
@@ -4003,7 +3975,7 @@ function TotDeepDive({ personas, globalKey, totProvider, totModel, totApiKey, on
     try {
       const tInfo = formatTargetForPrompt(target);
       const r = await callAI(p, [{ role: "user", content:
-        `아이디어: "${idea}"${formatOptionalDirectionFb(context)}${formatIdeaContext(ideaContext)}${tInfo}\n\nSequoia의 "Idea Maze" 관점에서 이 아이디어의 **3가지 근본적으로 다른 실행 경로(Branch)**를 도출하세요.\n\n각 Branch는:\n- 서로 다른 산업 프레임워크, 비즈니스 모델, 기술 접근을 취해야 합니다\n- 실제 유니콘 기업이 선택한 경로를 참고하세요\n- 단순한 변형이 아닌, 가치 사슬 자체를 다르게 구성하는 수준이어야 합니다\n\nJSON 형식으로만 응답:\n{"branches":[{"id":1,"title":"방향 제목 (구체적)","angle":"비즈니스 모델·타깃·가치 제안의 핵심 차이 한 줄","reasoning":"이 경로가 $1B+ 결과를 만들 수 있는 근거 2-3문장. 유사 성공 기업 레퍼런스 포함."},{"id":2,"title":"...","angle":"...","reasoning":"..."},{"id":3,"title":"...","angle":"...","reasoning":"..."}]}`
+        buildTotBranchPrompt(idea, context, ideaContext, tInfo, formatOptionalDirectionFb, formatIdeaContext)
       }], TOT_SYSTEM);
       const parsed = tryJson(r);
       br = parsed?.branches || [];
@@ -4018,7 +3990,7 @@ function TotDeepDive({ personas, globalKey, totProvider, totModel, totApiKey, on
     let ev = null;
     try {
       const r2 = await callAI(p, [{ role: "user", content:
-        `아이디어: "${idea}"${formatOptionalDirectionFb(context)}${formatIdeaContext(ideaContext)}\n\n3가지 실행 경로:\n${br.map(b => `Branch ${b.id}: ${b.title}\n관점: ${b.angle}\n근거: ${b.reasoning}`).join("\n\n")}\n\nTier-1 VC 파트너로서 각 경로를 아래 5가지 기준으로 **엄격하게** 10점 만점 평가하세요.\n\n**평가 기준 (낙관 편향 금지, 7점 이상은 확실한 근거 필요):**\n1. 시장성 — TAM $1B+ 잠재력, Why Now 타이밍, 성장률\n2. 실현가능성 — MVP 6개월 내 가능 여부, 기술 난이도, 콜드 스타트\n3. 혁신성 — 10x 개선 여부 (10% 개선은 0점), 기존 대비 근본적 차별\n4. 리스크 — (10=리스크 낮음) Kill Zone, 규제, 기술, 실행 리스크 종합\n5. 임팩트 — 바이럴 계수, 리텐션, NPS 잠재력, Power Law 가능성\n\n가지치기 사유는 "왜 $1B 결과를 만들 수 없는지" 구체적 시장 증거로.\n\nJSON만 응답:\n{"scores":[{"id":1,"시장성":8,"실현가능성":7,"혁신성":9,"리스크":7,"임팩트":8,"total":39},{"id":2,"시장성":6,"실현가능성":5,"혁신성":6,"리스크":4,"임팩트":5,"total":26},{"id":3,"시장성":5,"실현가능성":4,"혁신성":5,"리스크":3,"임팩트":4,"total":21}],"winner":1,"pruned":[{"id":2,"reason":"가지치기 사유 3-4문장, 유사 실패 사례 포함"},{"id":3,"reason":"가지치기 사유 3-4문장, 유사 실패 사례 포함"}],"reasoning":"최종 선택 근거 3-4문장, 유사 성공 사례 포함"}`
+        buildTotEvalPrompt(idea, context, ideaContext, br, formatOptionalDirectionFb, formatIdeaContext)
       }], TOT_SYSTEM);
       ev = tryJson(r2);
       if (!ev?.winner) ev = { scores: [], winner: 1, pruned: [], reasoning: r2.slice(0, 300) };
@@ -4035,7 +4007,7 @@ function TotDeepDive({ personas, globalKey, totProvider, totModel, totApiKey, on
     setSolutionStreaming(true);
     try {
       sol = await callAIStream(p, [{ role: "user", content:
-        `아이디어: "${idea}"${formatOptionalDirectionFb(context)}${formatIdeaContext(ideaContext)}\n선택된 방향: ${winBranch.title}\n관점: ${winBranch.angle}\n근거: ${winBranch.reasoning}\n\n이 방향을 **시리즈A 투자 제안서 수준**으로 구체화하세요.\n\n## 1. Executive Summary\n엘리베이터 피치 — 한 문단으로 핵심 가치 제안. "X for Y" 포맷 포함.\n\n## 2. Problem-Solution Fit\n- 타깃 고객의 구체적 페인포인트 (정량 데이터 포함)\n- 기존 대안 vs 우리 솔루션의 10x 개선 포인트\n- Hair-on-fire 문제인지 판정\n\n## 3. 비즈니스 모델 · 유닛 이코노믹스\n- 수익 모델 (구독/트랜잭션/광고/하이브리드)\n- 예상 ARPU, LTV:CAC 비율, 페이백 기간, 그로스 마진\n- 가격 책정 전략과 근거\n\n## 4. 기술 아키텍처 · MVP 정의\n- 핵심 기술 스택\n- MVP에 반드시 포함할 기능 vs 제외할 기능\n- 개발 예상 기간·인력\n\n## 5. Go-to-Market 전략\n- Beachhead 시장 정의 (구체적 세그먼트)\n- 채널 전략 (유료/무료/파트너십)\n- 초기 100명 → 1,000명 → 10,000명 확보 전략\n\n## 6. 실행 로드맵\n- 30일: 핵심 가설 3개 + 검증 방법 + 성공 기준\n- 90일: MVP 출시 + 초기 메트릭\n- 180일: PMF 증명 조건\n- 12개월: 스케일링 전략\n\n## 7. 팀 구성 · 자금\n핵심 인력 (직무/연차/채용 우선순위), 시드 자금 규모, 번 레이트\n\n## 8. 리스크 매트릭스 · 대응\n리스크별: 발생 확률(%), 임팩트(상/중/하), 대응 전략, 조기 경고 신호\n\n## 9. 최종 판정\nGo / No-Go / Pivot — 확신도(0-100%), 유사 성공 기업 레퍼런스\n\n한국어로 작성하세요.`
+        buildTotSolutionPrompt(idea, context, ideaContext, winBranch, formatOptionalDirectionFb, formatIdeaContext)
       }], TOT_SYSTEM, (_chunk, full) => { setSolution(full); });
     } catch (err) {
       sol = `심화 전개 오류: ${err.message}`;
@@ -4279,9 +4251,7 @@ function _startProtoGeneration({ itemId, skinKey, ideaText, persona, notifyDone,
   _protoGen.partial = "";
   _protoGenNotify();
 
-  const skin = PROTOTYPER_SKINS[skinKey];
-  const clipped = ideaText.length > 2000 ? ideaText.slice(0, 2000) + "\n…(이하 생략)" : ideaText;
-  const userMsg = `[원본 아이디어]\n${clipped}\n\n[선택 스킨: ${skin.name}]\n${skin.cssGuide}\n\n위 아이디어를 Cursor AI / Claude Code에서 즉시 사용 가능한 완성형 웹앱 개발 마스터 프롬프트로 생성해주세요. 사용자 요구사항, 기술 스택, UI/UX 설계, 데이터 모델, API 설계, 배포 전략까지 포괄하는 종합 프롬프트를 작성하세요.`;
+  const userMsg = buildPrototyperSynthMessage(ideaText, skinKey);
 
   callAIStream(
     { ...persona, role: PROTOTYPER_SYNTH_SYSTEM },
@@ -5590,7 +5560,7 @@ function CompetitorMapSection({ idea, personas, globalKey }) {
     if (!spend("competitor_map")) return; setLoading(true);
     try {
       const persona = pickUsablePersona(personas, globalKey);
-      const r = await callAI(persona, [{ role: "user", content: `아이디어: "${idea}"\n\n이 아이디어와 유사한 사업을 하고 있는 기업/서비스의 글로벌 분포를 분석하세요.\n\n다음 JSON만 반환 (코드펜스 금지):\n{"domestic":[{"name":"기업명","city":"도시","lat":37.5665,"lng":126.978,"desc":"한줄설명"}],"global":[{"name":"기업명","city":"도시","country":"국가","lat":37.0,"lng":127.0,"desc":"한줄설명"}],"summary":"국내외 사업 분포 요약 2-3문장"}\n\ndomestic은 한국 기업 5-8개, global은 해외 기업 8-12개. 실제 존재하는 기업과 최대한 정확한 좌표.` }]);
+      const r = await callAI(persona, [{ role: "user", content: buildCompetitorMapPrompt(idea) }]);
       const cleaned = r.replace(/```json|```/g, "").trim();
       let parsed;
       try { parsed = JSON.parse(cleaned); } catch {
@@ -5669,7 +5639,7 @@ function ExpertSearchSection({ idea, personas, globalKey }) {
     if (!spend("expert_search")) return; setLoading(true);
     try {
       const persona = pickUsablePersona(personas, globalKey);
-      const r = await callAI(persona, [{ role: "user", content: `아이디어: "${idea}"\n\n이 아이디어 분야의 최고 권위자, 핵심 인재, 관련 논문을 서칭하세요.\n\nJSON만 반환:\n{"experts":[{"name":"이름","title":"직함/소속","expertise":"전문분야","linkedin_query":"LinkedIn 검색 키워드","reason":"왜 이 사람이 핵심인지"}],"papers":[{"title":"논문 제목","authors":"저자","year":"연도","relevance":"관련성","scholar_query":"Google Scholar 검색 키워드"}],"communities":[{"name":"커뮤니티명","platform":"플랫폼","url":"예상 URL","desc":"설명"}]}\n\nexperts 5-8명, papers 3-5편, communities 3-5개. 실존 인물/논문 기반. 한국어로.` }]);
+      const r = await callAI(persona, [{ role: "user", content: buildExpertSearchPrompt(idea) }]);
       const cleaned = r.replace(/```json|```/g, "").trim();
       let parsed;
       try { parsed = JSON.parse(cleaned); } catch {
@@ -5761,7 +5731,7 @@ function InvestorSearchSection({ idea, personas, globalKey }) {
     if (!spend("investor_search")) return; setLoading(true);
     try {
       const persona = pickUsablePersona(personas, globalKey);
-      const r = await callAI(persona, [{ role: "user", content: `아이디어: "${idea}"\n\n이 아이디어/비즈니스에 투자 가능성이 있는 국내외 투자처 TOP10을 서칭하세요.\n\nJSON만 반환 (코드펜스 금지):\n{"investors":[{"rank":1,"name":"기관/펀드/인물명","type":"VC/엔젤/CVC/정부/액셀러레이터","country":"국가","focus":"주요 투자 분야","stage":"투자 단계(시드/시리즈A 등)","notable":"대표 포트폴리오 2-3개","reason":"이 아이디어에 투자 가능성이 높은 이유","email":"공개 연락처 이메일 (없으면 null)","website":"공식 웹사이트 URL","linkedin":"LinkedIn 페이지 URL (없으면 null)","contact_note":"연락 팁 한 줄"}]}\n\n반드시 10개. 국내 5개 + 해외 5개 혼합. 실제 존재하는 기관 기반. 한국어로.` }]);
+      const r = await callAI(persona, [{ role: "user", content: buildInvestorSearchPrompt(idea) }]);
       const cleaned = r.replace(/```json|```/g, "").trim();
       let parsed;
       try { parsed = JSON.parse(cleaned); } catch {
@@ -5901,10 +5871,9 @@ function QuantumSimCTA({ idea, context, existingReport, personas, globalKey }) {
       const persona = pickUsablePersona(personas, globalKey);
       if (!persona?.apiKey) throw new Error("API 키를 설정해 주세요.");
       const reportText = typeof existingReport === "string" ? existingReport : JSON.stringify(existingReport || {});
-      const content = `아이디어: "${idea || ""}"\n${context ? `배경: ${context}\n` : ""}\n기존 분석 리포트:\n${reportText.slice(0, 4000)}\n\n설정 주차: ${weeks}주\n선택 관점: ${perspectiveLabels[perspective]}\n\n위 정보를 기반으로 ${weeks}주 시뮬레이션을 JSON으로 실행하세요.`;
       const r = await callAI(
         { ...persona, role: QUANTUM_SIMULATOR_SYSTEM },
-        [{ role: "user", content }]
+        [{ role: "user", content: buildQuantumSimPrompt(idea, context, reportText, weeks, perspectiveLabels[perspective]) }]
       );
       const cleaned = r.replace(/```json|```/g, "").trim();
       let parsed;
@@ -6223,7 +6192,7 @@ function FactCheckRadar({ reportText, personas, globalKey }) {
       const text = typeof reportText === "string" ? reportText : JSON.stringify(reportText || {});
       const r = await callAI(
         { ...persona, role: FACT_CHECK_SYSTEM },
-        [{ role: "user", content: `다음 텍스트를 팩트체크하세요:\n\n${text.slice(0, 5000)}` }]
+        [{ role: "user", content: buildFactCheckPrompt(text) }]
       );
       const cleaned = r.replace(/```json|```/g, "").trim();
       let parsed;
@@ -6404,7 +6373,7 @@ function RefineCopilot({ reportText, personas, globalKey }) {
       const contextText = selectedText.slice(0, 4000);
       const r = await callAI(
         { ...persona, role: REFINE_COPILOT_SYSTEM },
-        [{ role: "user", content: `[원본 텍스트]\n${contextText}\n\n[수정 요청]\n${userMsg}\n\n수정된 전체 텍스트만 반환하세요.` }]
+        [{ role: "user", content: buildRefineCopilotPrompt(contextText, userMsg) }]
       );
       const modified = r.trim();
       setPendingDiff({ original: contextText, modified });
