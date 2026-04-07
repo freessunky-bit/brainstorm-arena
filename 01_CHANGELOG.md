@@ -4,6 +4,35 @@
 
 ---
 
+## 2026-04-07 #38 — 웹앱 프로토타이퍼: PROJECT_GUIDE.md 자동 생성 탭 추가
+
+### 변경
+
+#### 기능 추가
+- 프로토타이퍼 결과 화면에 "마스터 프롬프트 / PROJECT_GUIDE.md" 탭 구조 추가
+- PROJECT_GUIDE.md 탭: 생성된 프로젝트에 배치할 개발 지침 파일을 즉시 확인·복사·다운로드 가능
+- Claude Code 사용자는 `CLAUDE.md`로 이름 변경 시 자동 참조됨을 안내
+
+#### PROJECT_GUIDE.md 내용 (PROTOTYPER_PROJECT_GUIDE_TEMPLATE)
+- **프로젝트 개요**: 프로젝트명(아이디어 제목)·UI 스킨·기술 스택 자동 주입
+- **2.1 복잡한 버그 수정 절차**: 원인 파악→설명→합의→실행 필수 순서
+- **2.2 fallback 분기 금지**: 크리티컬 경로 절대 금지, 허용 예외 범위 명시
+- **2.3 코드 작성 원칙**: TypeScript strict, 컴포넌트 단일책임, 에러 명시적 노출
+- **2.4 추가 금지 목록**: 요청 외 기능·추측 기반 에러 핸들링·레거시 호환 코드
+- **3. 커밋 & PR 규칙**: 메시지 형식, PR 제목 70자 이내
+- **4. 수정 체크리스트**: 6개 항목
+
+#### UI 구성
+- 탭 스위처: "📝 마스터 프롬프트" / "📋 PROJECT_GUIDE.md" (기존 UI 완전 호환)
+- 가이드 탭: 코드블록 뷰어 + "📋 가이드 복사" 버튼 + "PROJECT_GUIDE.md 다운로드" 버튼
+- 프로젝트명·스킨명은 `{{TITLE}}`, `{{SKIN}}` 플레이스홀더로 동적 치환
+
+### 파일 변경
+- `src/prompts.js` — `PROTOTYPER_PROJECT_GUIDE_TEMPLATE` 상수 추가
+- `src/App.jsx` — `PROTOTYPER_PROJECT_GUIDE_TEMPLATE` import, `WebAppPrototyper`에 `activeTab`·`copiedGuide`·`guideContent`·`copyGuideToClipboard` 추가, result 탭 UI 재구성
+
+---
+
 ## 2026-04-06 #37 — 스트리밍 출력 영역 높이 60vh 제한 (모바일 최적화)
 
 ### 변경

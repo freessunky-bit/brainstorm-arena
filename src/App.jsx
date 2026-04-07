@@ -53,6 +53,7 @@ import {
   REFINE_COPILOT_SYSTEM,
   PROTOTYPER_SYNTH_SYSTEM,
   PROTOTYPER_SKINS,
+  PROTOTYPER_PROJECT_GUIDE_TEMPLATE,
 } from "./prompts.js";
 import { STYLES } from "./styles.js";
 
@@ -4310,8 +4311,10 @@ function WebAppPrototyper({ item, personas, globalKey, onClose, recordHistory, o
   const [result, setResult] = useState(hasCached ? pg.result : "");
   const [generating, setGenerating] = useState(isRunning);
   const [copied, setCopied] = useState(false);
+  const [copiedGuide, setCopiedGuide] = useState(false);
   const [closing, setClosing] = useState(false);
   const [viewRaw, setViewRaw] = useState(false);
+  const [activeTab, setActiveTab] = useState("prompt");
   const { notifyStart, notifyDone } = useTaskNotify("prototyper");
 
   // Consume cached result
@@ -4346,6 +4349,14 @@ function WebAppPrototyper({ item, personas, globalKey, onClose, recordHistory, o
     if (p?.summary) return typeof p.summary === "string" ? p.summary : JSON.stringify(p.summary).slice(0, 500);
     return item.title || JSON.stringify(p).slice(0, 500);
   }, [item]);
+
+  const guideContent = useMemo(() => {
+    const title = clipTitle(ideaText) || item.title || "프로젝트";
+    const skinName = selectedSkin ? (PROTOTYPER_SKINS[selectedSkin]?.name || selectedSkin) : "Default Modern";
+    return PROTOTYPER_PROJECT_GUIDE_TEMPLATE
+      .replace(/\{\{TITLE\}\}/g, title)
+      .replace(/\{\{SKIN\}\}/g, skinName);
+  }, [ideaText, selectedSkin, item.title]);
 
   const getPersona = useCallback(() => {
     const resolved = (personas || []).map(p => withResolvedApiKey(p, globalKey));
@@ -4415,6 +4426,30 @@ function WebAppPrototyper({ item, personas, globalKey, onClose, recordHistory, o
     doCopy(result).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  const copyGuideToClipboard = () => {
+    const doCopy = (text) => {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(text).catch(() => {
+          const ta = document.createElement("textarea");
+          ta.value = text; ta.style.cssText = "position:fixed;left:-9999px;top:-9999px;opacity:0";
+          document.body.appendChild(ta); ta.select();
+          try { document.execCommand("copy"); } catch (_) {}
+          document.body.removeChild(ta);
+        });
+      }
+      const ta = document.createElement("textarea");
+      ta.value = text; ta.style.cssText = "position:fixed;left:-9999px;top:-9999px;opacity:0";
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); } catch (_) {}
+      document.body.removeChild(ta);
+      return Promise.resolve();
+    };
+    doCopy(guideContent).then(() => {
+      setCopiedGuide(true);
+      setTimeout(() => setCopiedGuide(false), 2000);
     });
   };
 
@@ -4488,45 +4523,97 @@ function WebAppPrototyper({ item, personas, globalKey, onClose, recordHistory, o
         {phase === "result" && (
           <div className="proto-result-container">
             <div className="proto-result-header">
-              <h3>생성된 마스터 프롬프트</h3>
               <div className="proto-result-meta">
                 <span className="proto-result-tag">📐 {PROTOTYPER_SKINS[selectedSkin]?.name}</span>
+              </div>
+              {/* 탭 스위처 */}
+              <div style={{ display: "flex", gap: 4, marginBottom: 12, background: "var(--bg-surface-2)", borderRadius: 10, padding: 3 }}>
+                <button type="button" onClick={() => setActiveTab("prompt")} style={{
+                  flex: 1, padding: "8px 6px", border: "none", borderRadius: 8, cursor: "pointer",
+                  fontFamily: "var(--font-sans)", fontSize: 12, fontWeight: activeTab === "prompt" ? 800 : 500,
+                  background: activeTab === "prompt" ? "var(--bg-surface-1)" : "transparent",
+                  color: activeTab === "prompt" ? "var(--accent-primary)" : "var(--text-muted)",
+                  boxShadow: activeTab === "prompt" ? "var(--shadow-sm)" : "none",
+                  transition: "all 0.18s",
+                }}>📝 마스터 프롬프트</button>
+                <button type="button" onClick={() => setActiveTab("guide")} style={{
+                  flex: 1, padding: "8px 6px", border: "none", borderRadius: 8, cursor: "pointer",
+                  fontFamily: "var(--font-sans)", fontSize: 12, fontWeight: activeTab === "guide" ? 800 : 500,
+                  background: activeTab === "guide" ? "var(--bg-surface-1)" : "transparent",
+                  color: activeTab === "guide" ? "#7c3aed" : "var(--text-muted)",
+                  boxShadow: activeTab === "guide" ? "var(--shadow-sm)" : "none",
+                  transition: "all 0.18s",
+                }}>📋 PROJECT_GUIDE.md</button>
+              </div>
+            </div>
+
+            {activeTab === "prompt" && (<>
+              <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
                 <button type="button" className={`proto-view-toggle${viewRaw ? " active" : ""}`} onClick={() => setViewRaw(v => !v)}>
                   {viewRaw ? "📖 렌더링 보기" : "📝 원본(MD) 보기"}
                 </button>
               </div>
               <p className="proto-result-hint">복사 시 Cursor / Claude Code에 바로 붙여넣기 가능한 마크다운 원문이 복사됩니다.</p>
-            </div>
-            {viewRaw ? (
+              {viewRaw ? (
+                <div className="proto-code-block">
+                  <div className="proto-code-header">
+                    <span className="proto-code-label">master-prompt.md</span>
+                    <button type="button" className={`proto-code-copy${copied ? " copied" : ""}`} onClick={copyToClipboard}>
+                      {copied ? "✓ 복사됨" : "Copy"}
+                    </button>
+                  </div>
+                  <div className="proto-code-content">{result}</div>
+                </div>
+              ) : (
+                <div className="proto-rendered-block">
+                  <RichText text={result} />
+                </div>
+              )}
+              <div className="proto-result-actions">
+                <button type="button" className="proto-result-btn primary" onClick={copyToClipboard}>
+                  {copied ? "✓ 클립보드에 복사됨" : "📋 마크다운 복사"}
+                </button>
+                <button type="button" className="proto-result-btn" onClick={() => {
+                  const blob = new Blob([result], { type: "text/markdown" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url; a.download = "master-prompt.md"; a.click();
+                  URL.revokeObjectURL(url);
+                }}>.md 다운로드</button>
+                <button type="button" className="proto-result-btn" onClick={() => { setPhase("skin"); setResult(""); setViewRaw(false); }}>스킨 변경</button>
+                <button type="button" className="proto-result-btn" onClick={handleClose}>닫기</button>
+              </div>
+              <RefineCopilot reportText={result} personas={personas} globalKey={globalKey} />
+            </>)}
+
+            {activeTab === "guide" && (<>
+              <div style={{ padding: "10px 14px", background: "rgba(124,58,237,0.06)", border: "1px solid rgba(124,58,237,0.15)", borderRadius: 10, marginBottom: 12, fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6 }}>
+                <strong style={{ color: "#7c3aed" }}>📋 PROJECT_GUIDE.md</strong> — 프로젝트 루트에 이 파일을 생성하세요.<br />
+                Cursor AI는 자동으로 참조하고, Claude Code 사용자는 <code style={{ fontSize: 11, padding: "1px 5px", background: "var(--bg-surface-2)", borderRadius: 4 }}>CLAUDE.md</code>로 이름을 바꿔도 됩니다.
+              </div>
               <div className="proto-code-block">
                 <div className="proto-code-header">
-                  <span className="proto-code-label">master-prompt.md</span>
-                  <button type="button" className={`proto-code-copy${copied ? " copied" : ""}`} onClick={copyToClipboard}>
-                    {copied ? "✓ 복사됨" : "Copy"}
+                  <span className="proto-code-label">PROJECT_GUIDE.md</span>
+                  <button type="button" className={`proto-code-copy${copiedGuide ? " copied" : ""}`} onClick={copyGuideToClipboard}>
+                    {copiedGuide ? "✓ 복사됨" : "Copy"}
                   </button>
                 </div>
-                <div className="proto-code-content">{result}</div>
+                <div className="proto-code-content">{guideContent}</div>
               </div>
-            ) : (
-              <div className="proto-rendered-block">
-                <RichText text={result} />
+              <div className="proto-result-actions">
+                <button type="button" className="proto-result-btn primary" style={{ background: "#7c3aed" }} onClick={copyGuideToClipboard}>
+                  {copiedGuide ? "✓ 클립보드에 복사됨" : "📋 가이드 복사"}
+                </button>
+                <button type="button" className="proto-result-btn" onClick={() => {
+                  const blob = new Blob([guideContent], { type: "text/markdown" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url; a.download = "PROJECT_GUIDE.md"; a.click();
+                  URL.revokeObjectURL(url);
+                }}>PROJECT_GUIDE.md 다운로드</button>
+                <button type="button" className="proto-result-btn" onClick={handleClose}>닫기</button>
               </div>
-            )}
-            <div className="proto-result-actions">
-              <button type="button" className="proto-result-btn primary" onClick={copyToClipboard}>
-                {copied ? "✓ 클립보드에 복사됨" : "📋 마크다운 복사"}
-              </button>
-              <button type="button" className="proto-result-btn" onClick={() => {
-                const blob = new Blob([result], { type: "text/markdown" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url; a.download = "master-prompt.md"; a.click();
-                URL.revokeObjectURL(url);
-              }}>.md 다운로드</button>
-              <button type="button" className="proto-result-btn" onClick={() => { setPhase("skin"); setResult(""); setViewRaw(false); }}>스킨 변경</button>
-              <button type="button" className="proto-result-btn" onClick={handleClose}>닫기</button>
-            </div>
-            <RefineCopilot reportText={result} personas={personas} globalKey={globalKey} />
+            </>)}
           </div>
         )}
       </div>
