@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-04-08 — 토너먼트 라운드 전환 버그 수정
+
+### 버그 수정
+- `src/App.jsx`: 토너먼트 라운드 완료 후 다음 라운드로 진행되지 않는 버그 수정
+  - 원인: `setRoundSummary` 호출 시 `winners` 변수가 `try` 블록 스코프 밖에서 참조되어 `ReferenceError` 발생, `go()` 함수 전체 중단
+  - 수정: `winners` → `[...rem]`으로 교체 (try/catch 양쪽에서 정상 할당된 변수 사용)
+
+### 파일 변경
+- `src/App.jsx` — `setRoundSummary` winners 스코프 버그 수정, `LAST_UPDATED` 갱신
+
+---
+
 ## 2026-04-07 #39-b — API 기능 문서화 · 프롬프트 스크립트 분리 · 하네스 엔지니어링 지침 CLAUDE.md 분리
 
 ### 변경

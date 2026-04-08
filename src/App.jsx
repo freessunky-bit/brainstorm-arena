@@ -86,7 +86,7 @@ import {
 import { STYLES } from "./styles.js";
 
 // ─── 앱 업데이트 시점 (코드 수정 시 반드시 갱신) ───
-const LAST_UPDATED = "2026-04-07 17:00 KST";
+const LAST_UPDATED = "2026-04-08 12:00 KST";
 
 const MODE_TAGLINES = {
   tournament: [
@@ -2357,7 +2357,7 @@ function Tournament({ personas, globalKey, utilProvider, utilModel, utilApiKey, 
         const nextName = dl.labels[nextRn] || `R${nextRn + 1}`;
         setRoundSummary({
           roundName: name,
-          winners,
+          winners: [...rem],
           nextRoundName: nextName,
           emoji: dl.emojis[rn] || "⚔️",
           color: dl.colors[rn] || "#3182f6",
